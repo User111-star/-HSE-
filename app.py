@@ -23,9 +23,8 @@ if 'prediction_result' not in st.session_state:
 if 'uploaded_file_name' not in st.session_state:
     st.session_state.uploaded_file_name = ""
 
-# --- 2. 自定义 CSS (增加量子对撞对比框样式) ---
+# --- 2. 核心 CSS (量子星云 + 对撞机样式) ---
 def inject_ui_css():
-    # 根据步骤动态切换背景颜色
     bg_style = """
         background: radial-gradient(ellipse at bottom, #1B2735 0%, #090A0F 100%);
         overflow: hidden;
@@ -35,9 +34,9 @@ def inject_ui_css():
     <style>
         #MainMenu, footer {{ visibility: hidden; }}
         .stApp {{ {bg_style} }}
-        [data-testid="stSidebar"] {{ min-width: 320px !important; }}
+        [data-testid="stSidebar"] {{ min-width: 350px !important; }}
 
-        /* 结果页面：霓虹发光卡片 */
+        /* 霓虹结果卡片 */
         .neon-result-box {{
             background: rgba(255, 255, 255, 0.03);
             backdrop-filter: blur(15px);
@@ -55,9 +54,8 @@ def inject_ui_css():
             text-shadow: 0 0 20px rgba(0, 242, 254, 0.8);
             line-height: 1.1;
         }}
-        .neon-label {{ color: #bdc3c7; letter-spacing: 5px; text-transform: uppercase; font-size: 1rem; }}
 
-        /* 数据库对比：对撞机样式 */
+        /* 数据库对撞对比框 */
         .collision-box {{
             background: rgba(0, 242, 254, 0.08);
             border: 1px dashed rgba(0, 242, 254, 0.4);
@@ -87,9 +85,9 @@ MODEL_FILES = {
 @st.cache_data
 def load_target_database():
     try:
-        # 修改点：文件名更新为 predict.csv
+        # 读取上传的 predict.csv
         return pd.read_csv("predict.csv")
-    except Exception as e:
+    except:
         return None
 
 @st.cache_resource
@@ -99,7 +97,7 @@ def get_predictors():
 target_db = load_target_database()
 predictors = get_predictors()
 
-# --- 4. 侧边栏：参数展示 ---
+# --- 4. 侧边栏：参数格式化展示 ---
 with st.sidebar:
     st.markdown("## ⚙️ 预测配置中枢")
     target_prop = st.radio("选择预测目标", list(MODEL_FILES.keys()), disabled=(st.session_state.step == 2))
@@ -114,13 +112,13 @@ with st.sidebar:
     param_html = ""
     for k, v in params.items():
         name = icons.get(k, k)
+        # 科学计数法格式化显示
         disp_v = f"{v:.4g}" if isinstance(v, float) else v
         param_html += f"<div style='display:flex; justify-content:space-between; margin-bottom:8px;'><span>{name}</span><strong>{disp_v}</strong></div>"
     st.markdown(f"<div style='background:rgba(0,0,0,0.05); padding:15px; border-radius:10px;'>{param_html}</div>", unsafe_allow_html=True)
 
 # --- 5. 页面逻辑 ---
 
-# 步骤 1：上传区
 if st.session_state.step == 1:
     st.markdown("<br><br><h1 style='text-align:center;'>CGCNN 晶体性质预测平台</h1>", unsafe_allow_html=True)
     _, col_mid, _ = st.columns([1, 1.5, 1])
@@ -129,21 +127,21 @@ if st.session_state.step == 1:
         uploaded_file = st.file_uploader("上传 POSCAR 文件", type=None)
         if uploaded_file:
             st.session_state.uploaded_file_name = uploaded_file.name
-            # 统一命名为 POSCAR 供后端读取
+            # 强制命名为 POSCAR 解决读取兼容性
             with open("POSCAR", "wb") as f:
                 f.write(uploaded_file.getbuffer())
             
-            st.success(f"✅ 结构 {uploaded_file.name} 已载入")
+            st.success(f"✅ 结构 {uploaded_file.name} 已就绪")
             if st.button("🚀 启动量子推演", use_container_width=True):
-                with st.spinner("正在执行图卷积运算..."):
+                with st.spinner("正在执行图卷积推演..."):
                     res = predictors[target_prop].predict("POSCAR")
                     st.session_state.prediction_result = res
                     st.session_state.step = 2
                     st.rerun()
 
-# 步骤 2：沉浸展示 + 对比对比
 else:
-    if st.button("← 返回首页"):
+    # 沉浸式星空页
+    if st.button("← 返回实验室"):
         st.session_state.step = 1
         st.rerun()
 
@@ -151,7 +149,7 @@ else:
 
     with col_view:
         st.markdown("<h3 style='text-align:center; color:white;'>🔮 晶体空间拓扑态</h3>", unsafe_allow_html=True)
-        # 3D 高亮展示
+        # 3D 渲染：高亮球棍模型
         struct = Structure.from_file("POSCAR")
         view = py3Dmol.view(width=800, height=700)
         view.addModel(struct.to(fmt="cif"), 'cif')
@@ -166,7 +164,6 @@ else:
         val = st.session_state.prediction_result
         unit = MODEL_FILES[target_prop]["unit"]
         
-        # 核心结果卡片
         st.markdown(f"""
             <div class="neon-result-box">
                 <div class="neon-label">PREDICTED {name_only}</div>
@@ -174,21 +171,21 @@ else:
             </div>
         """, unsafe_allow_html=True)
 
-        # 数据库“对撞”对比逻辑
-        search_id = st.session_state.uploaded_file_name.split('.')[0] # 获取文件名（如 POSCAR8）
+        # 核心：数据库“对撞”对比
+        # 提取文件名（如从 POSCAR8.vasp 提取 POSCAR8）
+        search_id = st.session_state.uploaded_file_name.split('.')[0].strip()
         if target_db is not None:
             # 匹配 Name 列
-            match = target_db[target_db['Name'].astype(str).str.strip() == search_id.strip()]
+            match = target_db[target_db['Name'].astype(str).str.strip() == search_id]
             if not match.empty:
-                # 确定要对比的列名
                 db_col = 'Bandgap' if "Bandgap" in target_prop else 'Lattice'
                 true_val = match[db_col].values[0]
-                # 计算置信度 (1 - 相对误差)
+                # 计算置信度
                 acc = max(0, 100 - (abs(val-true_val)/true_val*100)) if true_val != 0 else 0
                 
                 st.markdown(f"""
                     <div class="collision-box">
-                        <div style="color:#00f2fe; font-size:0.9rem; letter-spacing:2px; font-weight:bold;">✦ 发现数据库匹配项: {search_id} ✦</div>
+                        <div style="color:#00f2fe; font-size:0.9rem; letter-spacing:2px; font-weight:bold;">✦ 发现数据库匹配: {search_id} ✦</div>
                         <div class="collision-grid">
                             <div style="text-align:center;">
                                 <small style="color:rgba(255,255,255,0.5);">模型预测</small>
@@ -196,14 +193,14 @@ else:
                             </div>
                             <div class="vs-circle">VS</div>
                             <div style="text-align:center;">
-                                <small style="color:rgba(255,255,255,0.5);">实验/目标值</small>
+                                <small style="color:rgba(255,255,255,0.5);">目标值 (HSE)</small>
                                 <div style="font-size:1.6rem; color:#a29bfe; font-weight:bold;">{true_val:.4f}</div>
                             </div>
                         </div>
                         <div class="accuracy-bar"><div class="accuracy-fill" style="width:{acc}%;"></div></div>
                         <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.85rem; color:#00ff88;">
-                            <span>绝对误差: {abs(val-true_val):.4f}</span>
-                            <span>预测精度: {acc:.1f}%</span>
+                            <span>误差: {abs(val-true_val):.4f}</span>
+                            <span>置信度: {acc:.1f}%</span>
                         </div>
                     </div>
                 """, unsafe_allow_html=True)
