@@ -9,7 +9,7 @@ import sys
 import time
 import zipfile
 import shutil
-import random    # <--- 新增：用于随机抽样
+import random
 from stmol import showmol
 from pymatgen.core.structure import Structure
 from predict_api import SinglePredictor
@@ -79,7 +79,6 @@ ATOM_INIT_PATH = "atom_init.json"
 def load_database():
     try:
         df = pd.read_csv("predict.csv")
-        # 暴力清洗列名空格，防止 KeyError
         df.columns = df.columns.str.strip()
         if 'index_label' in df.columns:
             df['index_label'] = df['index_label'].astype(str).str.strip()
@@ -107,11 +106,9 @@ def render_crystal(poscar_path):
     view.zoomTo()
     return view
 
-# === 新增：二合一的散点图绘制函数 ===
 @st.cache_data
 def draw_scatter_plot(csv_path, target_type):
     """根据测试结果 CSV 绘制散点图并返回 fig 对象"""
-    # 1. 读取数据
     df_test = pd.read_csv(csv_path, header=None, names=['Index', 'Calculated', 'Predicted'])
     
     df_test['Calculated'] = pd.to_numeric(df_test['Calculated'], errors='coerce')
@@ -121,13 +118,11 @@ def draw_scatter_plot(csv_path, target_type):
     y_true = df_test['Calculated'].values
     y_pred = df_test['Predicted'].values
 
-    # 2. 计算误差
     r2 = r2_score(y_true, y_pred)
     mae = mean_absolute_error(y_true, y_pred)
     rmse = np.sqrt(mean_squared_error(y_true, y_pred))
     z = np.abs(y_true - y_pred) / np.sqrt(2)
 
-    # 3. 初始化画布
     fig, ax = plt.subplots(figsize=(6, 5))
     ax.set_aspect('equal', adjustable='box')
     scatter = ax.scatter(y_true, y_pred, c=z, cmap='viridis', s=30, alpha=0.8, edgecolor='none')
@@ -135,7 +130,6 @@ def draw_scatter_plot(csv_path, target_type):
     min_val = min(np.min(y_true), np.min(y_pred))
     max_val = max(np.max(y_true), np.max(y_pred))
 
-    # 4. 根据目标类型动态切换 UI 设置
     if "带隙" in target_type:
         x_y_min = -0.1
         x_y_max = max_val + 0.2
@@ -143,7 +137,7 @@ def draw_scatter_plot(csv_path, target_type):
         ax.set_xlabel(r'Calculated $E_{g\_HSE}$ (eV)', fontsize=16)
         ax.set_ylabel(r'Predicted $E_{g\_HSE}$ (eV)', fontsize=16)
         text_x = 0.40
-    else:  # 晶格常数
+    else:
         x_y_min = min_val - 0.1
         x_y_max = max_val + 0.2
         unit_str = ""
@@ -151,7 +145,6 @@ def draw_scatter_plot(csv_path, target_type):
         ax.set_ylabel(r'Predicted a_HSE (Å)', fontsize=16)
         text_x = 0.50
 
-    # 5. 画对角线和设置刻度
     ax.plot([x_y_min, x_y_max], [x_y_min, x_y_max], 'k--', lw=1, alpha=0.5)
     ax.xaxis.set_major_formatter(FormatStrFormatter('%.1f'))
     ax.yaxis.set_major_formatter(FormatStrFormatter('%.1f'))
@@ -160,7 +153,6 @@ def draw_scatter_plot(csv_path, target_type):
     ax.set_xlim([x_y_min, x_y_max])
     ax.set_ylim([x_y_min, x_y_max])
 
-    # 6. 颜色条设置
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="5%", pad=0.1)
     cbar = plt.colorbar(scatter, cax=cax)
@@ -170,7 +162,6 @@ def draw_scatter_plot(csv_path, target_type):
     cbar.locator = MaxNLocator(nbins=6)
     cbar.update_ticks()
 
-    # 7. 文本框
     textstr = '\n'.join((
         r'$R^2=%.3f$' % (r2,),
         r'MAE$=%.3f$%s' % (mae, unit_str),
@@ -221,7 +212,6 @@ st.markdown("<div class='sub-title'>基于图神经网络与贝叶斯优化的�
 # --- 6. 预测模式界面 ---
 if app_mode == "🔮 模型预测模式":
     
-    # 【进阶升级】：模式切换开关
     pred_mode = st.radio("切换预测模式：", ["📄 单文件预测", "📦 批量文件预测 (ZIP 压缩包)"], horizontal=True)
     st.markdown("---")
 
@@ -295,7 +285,6 @@ if app_mode == "🔮 模型预测模式":
         st.markdown("### 📥 批量数据输入区")
         uploaded_zip = st.file_uploader("上传包含多个 POSCAR 和 (可选) 真值表 CSV 的 ZIP 压缩包", type="zip")
         
-        # === 核心进阶：新增抽样控制器 ===
         max_predict_num = st.number_input("期望预测的样本数量 (将在剔除真值 <0 后随机抽取)", min_value=1, value=50, step=1)
         
         if uploaded_zip and models[target_prop]:
@@ -334,10 +323,8 @@ if app_mode == "🔮 模型预测模式":
                     else:
                         target_idx = 2 if "Bandgap" in target_prop else 4
                         
-                        # === 核心进阶：数据预演与真值过滤 ===
                         valid_data_info = []
                         for p_path in poscar_files:
-                            # 智能提取 ID (匹配文件名或者父文件夹名的数字)
                             filename = os.path.basename(p_path)
                             nums = re.findall(r'\d+', filename)
                             if not nums:
@@ -345,7 +332,6 @@ if app_mode == "🔮 模型预测模式":
                                 nums = re.findall(r'\d+', parent_dir)
                             file_id = nums[0] if nums else "UNKNOWN"
                             
-                            # 匹配真实值
                             true_val = np.nan
                             if df_batch is not None and file_id != "UNKNOWN":
                                 match = df_batch[df_batch.iloc[:, 0].astype(str).str.strip() == str(file_id)]
@@ -354,38 +340,37 @@ if app_mode == "🔮 模型预测模式":
                                         true_val = float(match.iloc[0, target_idx])
                                     except: pass
                             
-                            # 【过滤逻辑】：如果真值存在且小于0，直接扔掉不要！
+                            # 过滤真值小于 0 的数据
                             if pd.notna(true_val) and true_val < 0:
                                 continue
                                 
                             valid_data_info.append((p_path, file_id, true_val))
                         
-                        # 检查过滤后是否还有存活的数据
-                        if len(valid_data_info) == 0:
-                            st.error("⚠️ 数据过滤完毕后，未能找到任何有效的预测样本（可能所有数值均 < 0），预测已终止。")
+                        # --- 【核心修复：统计真实有效的过滤后数量】 ---
+                        total_valid_count = len(valid_data_info)
+                        
+                        if total_valid_count == 0:
+                            st.error("⚠️ 数据过滤完毕后，未能找到任何有效的预测样本（可能所有数值均 < 0 或未能成功匹配表格），预测已终止。")
                         else:
-                            # === 核心进阶：依据输入值进行智能抽样 ===
-                            if len(valid_data_info) > max_predict_num:
+                            if total_valid_count > max_predict_num:
                                 valid_data_info = random.sample(valid_data_info, max_predict_num)
-                                st.success(f"✅ 剔除异常数据后，共从 {len(poscar_files)} 个文件中随机抽取了 {max_predict_num} 个有效样本进行预测。")
+                                st.success(f"✅ 剔除异常数据（<0）后，数据库真实剩余 **{total_valid_count}** 个有效样本。已从中随机抽取 **{max_predict_num}** 个进行预测。")
                             else:
-                                st.success(f"✅ 剔除异常数据后剩余 {len(valid_data_info)} 个有效样本 (未超过您设定的阈值)，即将全量预测。")
+                                st.success(f"✅ 剔除异常数据后，真实剩余 **{total_valid_count}** 个有效样本 (未超过您设定的阈值)，即将全量预测。")
                                 
                             prog_bar = st.progress(0)
                             status_text = st.empty()
                             results = []
                             
-                            # 3. 循环批量预测 (仅对过滤+抽样后的最终有效数组执行)
+                            # 3. 循环批量预测
                             for i, (p_path, file_id, true_val) in enumerate(valid_data_info):
                                 status_text.code(f"正在预测 ({i+1}/{len(valid_data_info)}): 晶体ID {file_id}")
                                 try:
-                                    # 调用侧边栏选定的模型
                                     pred_val = models[target_prop].predict(p_path)
                                     results.append([file_id, true_val, pred_val])
                                 except Exception as e:
-                                    pass # 忽略单个可能引起的崩溃
+                                    pass 
                                 
-                                # 更新进度条
                                 prog_bar.progress((i + 1) / len(valid_data_info))
                             
                             status_text.success(f"🎉 批量预测完成！共生成 {len(results)} 条数据结果。")
@@ -411,7 +396,6 @@ if app_mode == "🔮 模型预测模式":
                                     )
                             
                             with col_b:
-                                # 确保真值存在，防止画图崩溃
                                 valid_rows = res_df.dropna()
                                 if len(valid_rows) >= 2:
                                     st.markdown("### 📈 批量预测散点拟合")
@@ -423,7 +407,6 @@ if app_mode == "🔮 模型预测模式":
                                     st.warning("⚠️ CSV 内匹配到的有效真实值不足（或未提供参考表），无法绘制真实/预测对比散点图。")
                 
                 finally:
-                    # 销毁无用的数据，防止炸硬盘
                     shutil.rmtree(batch_temp, ignore_errors=True)
 
 # --- 7. 训练模式界面 ---
