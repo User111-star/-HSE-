@@ -218,7 +218,7 @@ with col_left:
     uploaded_file = st.file_uploader("", help="支持 VASP POSCAR 格式文件")
 
     if uploaded_file:
-        temp_poscar_path = "temp_poscar_upload"
+        temp_poscar_path = "POSCAR"
         with open(temp_poscar_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
 
