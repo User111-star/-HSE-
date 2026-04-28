@@ -13,12 +13,16 @@ from stmol import showmol
 from pymatgen.core.structure import Structure
 from predict_api import SinglePredictor
 
-# === 新增：画图所需的依赖包 ===
+# === 画图所需的依赖包 ===
+import numpy as np   # <--- 就是漏了这一行！
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 from matplotlib.ticker import FormatStrFormatter, MaxNLocator
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+# --- 1. 页面基本配置 ---
+# ... 下面的代码完全不用动 ...
 
 # --- 1. 页面基本配置 ---
 st.set_page_config(
