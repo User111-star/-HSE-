@@ -4,6 +4,11 @@ import json
 import pandas as pd
 import py3Dmol
 import re
+import subprocess
+import sys
+import time
+import zipfile
+import shutil
 from stmol import showmol
 from pymatgen.core.structure import Structure
 from predict_api import SinglePredictor
@@ -45,7 +50,7 @@ def local_css():
 
 local_css()
 
-# --- 3. 配置文件路径 ---
+# --- 3. 路径配置 ---
 MODEL_FILES = {
     "带隙 (Bandgap)": {
         "model_path": "贝叶斯优化的HSE带隙预测模型.tar",
@@ -60,7 +65,7 @@ MODEL_FILES = {
 }
 ATOM_INIT_PATH = "atom_init.json"
 
-# --- 4. 核心加载函数 ---
+# --- 4. 辅助函数 ---
 @st.cache_data
 def load_database():
     try:
@@ -68,22 +73,15 @@ def load_database():
         if 'index_label' in df.columns:
             df['index_label'] = df['index_label'].astype(str).str.strip()
         return df
-    except Exception:
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
 @st.cache_resource
 def load_all_models():
     models = {}
-    try:
-        bg_info = MODEL_FILES["带隙 (Bandgap)"]
-        models["带隙 (Bandgap)"] = SinglePredictor(bg_info["model_path"], bg_info["param_path"], ATOM_INIT_PATH)
-    except:
-        models["带隙 (Bandgap)"] = None
-    try:
-        la_info = MODEL_FILES["晶格常数 (Lattice)"]
-        models["晶格常数 (Lattice)"] = SinglePredictor(la_info["model_path"], la_info["param_path"], ATOM_INIT_PATH)
-    except:
-        models["晶格常数 (Lattice)"] = None
+    for key, info in MODEL_FILES.items():
+        try:
+            models[key] = SinglePredictor(info["model_path"], info["param_path"], ATOM_INIT_PATH)
+        except: models[key] = None
     return models
 
 def render_crystal(poscar_path):
@@ -96,53 +94,41 @@ def render_crystal(poscar_path):
     view.zoomTo()
     return view
 
-# 预加载
 db_df = load_database()
 models = load_all_models()
 
-# --- 5. 侧边栏导航 ---
+# --- 5. 侧边栏 ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2000/2000885.png", width=80)
     st.markdown("## 🧭 系统导航")
-    
     app_mode = st.radio("选择运行模式：", ["🔮 模型预测模式", "⚙️ 模型训练模式"], index=0)
-    
     st.markdown("---")
     
     if app_mode == "🔮 模型预测模式":
-        st.markdown("### 🎛️ 预测配置")
-        target_prop = st.radio("🎯 选择预测目标：", ["带隙 (Bandgap)", "晶格常数 (Lattice)"], index=0)
-        
-        # 【恢复】：展示详细超参数
-        st.markdown("### 🧬 当前模型超参数")
+        target_prop = st.radio("🎯 选择预测目标：", list(MODEL_FILES.keys()), index=0)
+        st.markdown("### 🧬 当前使用的超参数")
         try:
             with open(MODEL_FILES[target_prop]['param_path'], 'r', encoding='utf-8') as f:
                 params = json.load(f)
-            p_html = ""
-            for k, v in params.items():
-                display_v = f"{v:.4g}" if isinstance(v, float) else v
-                p_html += f"<div style='display:flex; justify-content:space-between; margin-bottom:8px;'><span>{k}</span><strong>{display_v}</strong></div>"
+            p_html = "".join([f"<div style='display:flex; justify-content:space-between; margin-bottom:8px;'><span>{k}</span><strong>{v:.4g if isinstance(v, float) else v}</strong></div>" for k,v in params.items()])
             st.markdown(f"<div class='param-box'>{p_html}</div>", unsafe_allow_html=True)
-        except: st.warning("未找到参数文件")
-        
+        except: pass
     else:
-        st.markdown("### 🎛️ 训练任务选择")
-        train_target = st.radio("🎯 选择训练目标：", ["带隙 (Bandgap)", "晶格常数 (Lattice)"], index=0)
-        st.success(f"已加载 {train_target} 的预设超参数")
+        train_target = st.radio("🎯 选择训练任务：", list(MODEL_FILES.keys()), index=0)
 
 st.markdown("<div class='main-title'>CGCNN 晶体性质智能平台</div>", unsafe_allow_html=True)
 st.markdown("<div class='sub-title'>基于图神经网络与贝叶斯优化的第一性原理精度替代模型</div>", unsafe_allow_html=True)
 
-# --- 6. 主界面：模型预测 ---
+# --- 6. 预测模式界面 ---
 if app_mode == "🔮 模型预测模式":
     col_l, _, col_r = st.columns([1.2, 0.1, 1])
     with col_l:
         st.markdown("### 📥 数据输入区")
-        uploaded_file = st.file_uploader("上传 POSCAR 文件", help="系统将自动识别文件名数字ID")
+        uploaded_file = st.file_uploader("上传 POSCAR 文件", help="支持 VASP POSCAR 格式")
         if uploaded_file:
             with open("POSCAR", "wb") as f: f.write(uploaded_file.getbuffer())
-            st.success(f"✅ 文件 [{uploaded_file.name}] 解析就绪")
-            st.markdown("<h4 style='text-align: center; margin-top: 20px;'>🧊 晶体结构三维预览</h4>", unsafe_allow_html=True)
+            st.success(f"✅ 文件 [{uploaded_file.name}] 已就绪")
+            st.markdown("<h4 style='text-align: center; margin-top: 20px;'>🧊 晶体结构预览</h4>", unsafe_allow_html=True)
             try:
                 st.markdown("<div class='viewer-container'>", unsafe_allow_html=True)
                 showmol(render_crystal("POSCAR"), height=500, width=600)
@@ -152,11 +138,11 @@ if app_mode == "🔮 模型预测模式":
     with col_r:
         st.markdown("### 📊 运算结果区")
         if models[target_prop] is None:
-            st.error("❌ 缺少模型权重文件，请先前往训练模式。")
+            st.error(f"❌ 未检测到 {target_prop} 的模型权重，请先前往训练模式。")
         elif not uploaded_file:
-            st.info("等待上传 POSCAR 数据...")
+            st.info("等待上传数据...")
         else:
-            if st.button("🚀 启动前向传播预测", use_container_width=True):
+            if st.button("🚀 启动预测", use_container_width=True):
                 with st.spinner("计算中..."):
                     try:
                         res = models[target_prop].predict("POSCAR")
@@ -169,9 +155,7 @@ if app_mode == "🔮 模型预测模式":
                             if not match.empty:
                                 col = 'Gap' if "Bandgap" in target_prop else 'lattice'
                                 t_val = float(match.iloc[0][col])
-                                abs_err = abs(res - t_val)
-                                rel_err = (abs_err / t_val * 100) if t_val != 0 else 0
-                                # 顶格写防止 Markdown 渲染错误
+                                abs_err, rel_err = abs(res - t_val), (abs(res - t_val)/t_val*100 if t_val != 0 else 0)
                                 error_html = f"""
 <div style="display: flex; justify-content: space-around; margin-top: 20px; border-top: 2px solid #ecf0f1; padding-top: 20px;">
     <div>
@@ -191,49 +175,131 @@ if app_mode == "🔮 模型预测模式":
     <div style="color: #27ae60; font-weight: 500; margin-bottom: 10px;">✓ 预测成功</div>
     {error_html}
 </div>""", unsafe_allow_html=True)
-                    except Exception as e: st.error(f"预测失败: {e}")
+                    except Exception as e: st.error(f"❌ 预测出错: {e}")
 
-# --- 7. 主界面：模型训练 ---
+# --- 7. 训练模式界面 ---
 elif app_mode == "⚙️ 模型训练模式":
     col_t1, col_t2 = st.columns([1.5, 1])
     with col_t1:
         st.markdown("<div class='train-card'>", unsafe_allow_html=True)
-        st.markdown("### 📁 1. 路径设置")
-        dataset_path = st.text_input("数据集路径：", value="./dataset")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        st.markdown("<div class='train-card'>", unsafe_allow_html=True)
+        st.markdown("### 📁 1. 数据集准备")
+        
+        # 核心更新：使用文件上传器接受 ZIP
+        uploaded_dataset = st.file_uploader("上传数据集压缩包 (.zip)", type="zip", help="压缩包内需包含所有 POSCAR 文件及对应的 id_prop.csv")
+        
         st.markdown("### 📊 2. 数据划分比例")
         c1, c2, c3 = st.columns(3)
-        train_r = c1.number_input("训练集 (Train)", 0.0, 1.0, 0.8, 0.05)
-        val_r = c2.number_input("验证集 (Val)", 0.0, 1.0, 0.1, 0.05)
-        test_r = c3.number_input("测试集 (Test)", 0.0, 1.0, 0.1, 0.05)
+        train_r = c1.number_input("训练集", 0.0, 1.0, 0.8, 0.01)
+        val_r = c2.number_input("验证集", 0.0, 1.0, 0.1, 0.01)
+        test_r = c3.number_input("测试集", 0.0, 1.0, 0.1, 0.01)
         
-        total_ratio = train_r + val_r + test_r
-        if round(total_ratio, 2) != 1.0:
-            st.error(f"⚠️ 当前比例总和为 {total_ratio:.2f}，请确保总和等于 1.0")
-        else:
-            st.success("✅ 比例分配有效")
+        valid = round(train_r + val_r + test_r, 2) == 1.0
+        if not valid: st.error(f"⚠️ 比例总和必须为 1.0 (当前: {train_r+val_r+test_r:.2f})")
         st.markdown("</div>", unsafe_allow_html=True)
 
-        if st.button("🚀 开始训练模型", use_container_width=True, disabled=(round(total_ratio, 2) != 1.0)):
-            # 这里将在后续接入 main.py 的实际调用
-            st.info("任务已启动，正在初始化训练环境...")
-            progress_bar = st.progress(0)
-            status = st.empty()
-            # 模拟进度
-            import time
-            for i in range(101):
-                time.sleep(0.01)
-                progress_bar.progress(i)
-                status.text(f"训练进度: {i}% (正在同步训练 Loss ...)")
-            st.success("🎉 训练任务圆满完成！")
+        if st.button("🚀 启动 CGCNN 训练任务", use_container_width=True, disabled=not (valid and uploaded_dataset)):
+            st.info("📦 正在初始化云端临时环境，解压数据集...")
+            
+            # --- 自动解压与过渡文件夹构建机制 ---
+            temp_extract_dir = "temp_extract_dir_cgcnn"
+            final_data_dir = "temp_dataset"  # 纯净的无斜杠目录名，防止 main.py 保存权重时路径冲突
+            
+            # 确保启动前清理残留
+            for d in [temp_extract_dir, final_data_dir]:
+                if os.path.exists(d): shutil.rmtree(d, ignore_errors=True)
+                
+            os.makedirs(temp_extract_dir, exist_ok=True)
+            os.makedirs(final_data_dir, exist_ok=True)
+            
+            try:
+                # 1. 保存压缩包并解压
+                zip_path = os.path.join(temp_extract_dir, "upload_data.zip")
+                with open(zip_path, "wb") as f:
+                    f.write(uploaded_dataset.getbuffer())
+                    
+                with zipfile.ZipFile(zip_path, 'r') as z:
+                    z.extractall(temp_extract_dir)
+                    
+                # 2. 智能寻路：寻找包含 id_prop.csv 的真实数据根目录
+                target_folder = None
+                for root, dirs, files in os.walk(temp_extract_dir):
+                    if "id_prop.csv" in files:
+                        target_folder = root
+                        break
+                        
+                if target_folder is None:
+                    st.error("❌ 解压失败：在压缩包内未找到 `id_prop.csv` 文件，请检查格式！")
+                    shutil.rmtree(temp_extract_dir, ignore_errors=True)
+                    shutil.rmtree(final_data_dir, ignore_errors=True)
+                    st.stop()
+                    
+                # 3. 将真实数据迁移到平铺的 final_data_dir 目录
+                for item in os.listdir(target_folder):
+                    s = os.path.join(target_folder, item)
+                    d = os.path.join(final_data_dir, item)
+                    if os.path.isdir(s):
+                        shutil.copytree(s, d)
+                    else:
+                        shutil.copy2(s, d)
+                        
+                st.success("✅ 数据集解压并挂载成功！正在调起训练进程...")
+                
+                # 4. 组装 main.py 的命令并调用
+                with open(MODEL_FILES[train_target]['param_path'], 'r') as f:
+                    params = json.load(f)
+                
+                cmd = [
+                    sys.executable, "main.py", final_data_dir,
+                    "--epochs", str(params.get("epochs", 50)),
+                    "--batch-size", str(params.get("batch_size", 256)),
+                    "--lr", str(params.get("lr", 0.01)),
+                    "--train-ratio", str(train_r),
+                    "--val-ratio", str(val_r),
+                    "--test-ratio", str(test_r),
+                    "--atom-fea-len", str(params.get("atom_fea_len", 64)),
+                    "--n-conv", str(params.get("n_conv", 3)),
+                    "--h-fea-len", str(params.get("h_fea_len", 128)),
+                    "--n-h", str(params.get("n_h", 1))
+                ]
+                
+                progress_bar = st.progress(0)
+                log_area = st.empty()
+                max_epochs = params.get("epochs", 50)
+                
+                # 异步执行，实时捕获日志
+                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+                
+                for line in process.stdout:
+                    # 抓取控制台输出里的 Epoch: [数字]
+                    epoch_match = re.search(r"Epoch: \[(\d+)\]", line)
+                    if epoch_match:
+                        current_epoch = int(epoch_match.group(1))
+                        progress_bar.progress(min(current_epoch / max_epochs, 1.0))
+                    
+                    log_area.code(f"日志流: {line.strip()}")
+                
+                process.wait()
+                
+                if process.returncode == 0:
+                    st.success("🎉 训练圆满完成！最佳权重已更新。")
+                else:
+                    st.error("❌ 训练异常终止，请查看上方日志。")
+                    
+            except Exception as e:
+                st.error(f"启动失败: {e}")
+            finally:
+                # 5. 阅后即焚：无论成功失败，销毁所有上百兆的临时数据集文件！
+                log_area.code(f"日志流: 训练任务结束，正在清理临时虚拟文件夹...")
+                time.sleep(1)
+                shutil.rmtree(temp_extract_dir, ignore_errors=True)
+                shutil.rmtree(final_data_dir, ignore_errors=True)
+                log_area.code(f"日志流: 清理完成，系统环境已恢复洁净。")
 
     with col_t2:
         st.markdown("<div class='train-card'>", unsafe_allow_html=True)
         st.markdown("### 🧬 自动加载的超参数")
         try:
-            with open(MODEL_FILES[train_target]['param_path'], 'r', encoding='utf-8') as f:
+            with open(MODEL_FILES[train_target]['param_path'], 'r') as f:
                 st.json(json.load(f))
-        except: st.error("无法加载对应的 JSON 参数")
+        except: st.warning("未找到参数文件")
         st.markdown("</div>", unsafe_allow_html=True)
