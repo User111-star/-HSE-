@@ -219,22 +219,40 @@ elif app_mode == "⚙️ 模型训练模式":
                 with open(zip_path, "wb") as f: f.write(uploaded_dataset.getbuffer())
                 with zipfile.ZipFile(zip_path, 'r') as z: z.extractall(temp_root)
                 
-                # 2. 寻路机制：查找 id_prop.csv
+                # 2. 智能寻路：查找包含 POSCAR 和 CSV 的目录
                 real_folder = None
+                target_csv = None
                 for r, d, files in os.walk(temp_root):
-                    if "id_prop.csv" in files:
+                    # 找找有没有 csv 文件
+                    csv_files = [f for f in files if f.endswith('.csv')]
+                    # 找找有没有 POSCAR 文件
+                    has_poscar = any("POSCAR" in f for f in files)
+                    
+                    if csv_files and has_poscar:
                         real_folder = r
+                        target_csv = csv_files[0]  # 抓取找到的 CSV 名字
                         break
                 
                 if not real_folder:
-                    st.error("❌ ZIP 包内未找到 id_prop.csv 文件！")
+                    st.error("❌ ZIP 包内未同时找到 `CSV表格` 和 `POSCAR` 文件，请确保它们放在同一个文件夹内！")
                     st.stop()
                 
-                # 3. 挂载数据到干净目录
+                # 3. 挂载数据到干净目录，并【强制重命名】CSV 喂给 main.py
                 for item in os.listdir(real_folder):
-                    shutil.move(os.path.join(real_folder, item), os.path.join(data_dir, item))
+                    src_path = os.path.join(real_folder, item)
+                    
+                    if item == target_csv:
+                        # 核心修复：把你压缩包里的 predict.csv 强行改名为 main.py 认识的 id_prop.csv
+                        dst_path = os.path.join(data_dir, "id_prop.csv")
+                    else:
+                        dst_path = os.path.join(data_dir, item)
+                        
+                    if os.path.isdir(src_path):
+                        shutil.copytree(src_path, dst_path)
+                    else:
+                        shutil.copy2(src_path, dst_path)
                 
-                st.success("✅ 数据集挂载成功。开始运行训练脚本...")
+                st.success(f"✅ 数据集挂载成功！(已自动将 {target_csv} 识别为训练标签)。开始运行...")
                 
                 # 4. 读取 JSON 参数
                 with open(MODEL_FILES[train_target]['param_path'], 'r') as f:
