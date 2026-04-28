@@ -21,7 +21,6 @@ def local_css():
     <style>
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
-        header {visibility: hidden;}
 
         .stApp {
             background-color: #f8f9fa;
