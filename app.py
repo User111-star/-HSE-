@@ -137,7 +137,7 @@ def draw_scatter_plot(csv_path, target_type):
         ax.set_xlabel(r'Calculated $E_{g\_HSE}$ (eV)', fontsize=16)
         ax.set_ylabel(r'Predicted $E_{g\_HSE}$ (eV)', fontsize=16)
         text_x = 0.40
-    else:
+    else:  
         x_y_min = min_val - 0.1
         x_y_max = max_val + 0.2
         unit_str = ""
@@ -301,7 +301,6 @@ if app_mode == "🔮 模型预测模式":
                         with zipfile.ZipFile(zip_path, 'r') as z:
                             z.extractall(batch_temp)
                     
-                    # 1. 寻找真值表 CSV
                     df_batch = None
                     for r, d, files in os.walk(batch_temp):
                         csv_files = [f for f in files if f.endswith('.csv')]
@@ -311,7 +310,6 @@ if app_mode == "🔮 模型预测模式":
                             except: pass
                             break
                     
-                    # 2. 寻找所有 POSCAR
                     poscar_files = []
                     for r, d, files in os.walk(batch_temp):
                         for f in files:
@@ -340,13 +338,11 @@ if app_mode == "🔮 模型预测模式":
                                         true_val = float(match.iloc[0, target_idx])
                                     except: pass
                             
-                            # 过滤真值小于 0 的数据
                             if pd.notna(true_val) and true_val < 0:
                                 continue
                                 
                             valid_data_info.append((p_path, file_id, true_val))
                         
-                        # --- 【核心修复：统计真实有效的过滤后数量】 ---
                         total_valid_count = len(valid_data_info)
                         
                         if total_valid_count == 0:
@@ -362,7 +358,6 @@ if app_mode == "🔮 模型预测模式":
                             status_text = st.empty()
                             results = []
                             
-                            # 3. 循环批量预测
                             for i, (p_path, file_id, true_val) in enumerate(valid_data_info):
                                 status_text.code(f"正在预测 ({i+1}/{len(valid_data_info)}): 晶体ID {file_id}")
                                 try:
@@ -375,14 +370,12 @@ if app_mode == "🔮 模型预测模式":
                             
                             status_text.success(f"🎉 批量预测完成！共生成 {len(results)} 条数据结果。")
                             
-                            # 4. 保存为 CSV
                             res_df = pd.DataFrame(results, columns=["Index", "Calculated", "Predicted"])
                             out_csv_name = f"batch_predict_results_{run_id}.csv"
                             res_df.to_csv(out_csv_name, index=False, header=False)
                             
                             st.markdown("---")
                             
-                            # 5. 自动画图与提供下载
                             col_a, col_b = st.columns([1, 1.5])
                             with col_a:
                                 st.markdown("### 📥 获取预测报告")
@@ -417,11 +410,14 @@ elif app_mode == "⚙️ 模型训练模式":
         st.markdown("### 📁 1. 上传数据集")
         uploaded_dataset = st.file_uploader("上传数据集 ZIP 压缩包", type="zip")
         
-        st.markdown("### 📊 2. 自定义划分比例")
+        st.markdown("### 📊 2. 自定义划分比例与抽样")
         c1, c2, c3 = st.columns(3)
         train_r = c1.number_input("训练集", 0.0, 1.0, 0.8, 0.05)
         val_r = c2.number_input("验证集", 0.0, 1.0, 0.1, 0.05)
         test_r = c3.number_input("测试集", 0.0, 1.0, 0.1, 0.05)
+        
+        # === 核心进阶：新增训练集的抽样控制器 ===
+        max_train_num = st.number_input("期望用于训练的总样本数量 (将在剔除真值 <0 后随机抽取)", min_value=10, value=500, step=10)
         
         valid = round(train_r + val_r + test_r, 2) == 1.0
         if not valid: 
@@ -437,12 +433,14 @@ elif app_mode == "⚙️ 模型训练模式":
             os.makedirs(data_dir, exist_ok=True)
             
             try:
+                # 1. 解压数据
                 zip_path = os.path.join(temp_root, "data.zip")
                 with open(zip_path, "wb") as f: 
                     f.write(uploaded_dataset.getbuffer())
                 with zipfile.ZipFile(zip_path, 'r') as z: 
                     z.extractall(temp_root)
                 
+                # 2. 智能寻路：查找包含 POSCAR 和 CSV 的目录
                 real_folder = None
                 target_csv = None
                 for r, d, files in os.walk(temp_root):
@@ -457,24 +455,53 @@ elif app_mode == "⚙️ 模型训练模式":
                     st.error("❌ ZIP 包内未同时找到 `CSV表格` 和 `POSCAR` 文件，请确保它们放在同一个文件夹内！")
                     st.stop()
                 
+                # === 核心进阶：训练集数据前置过滤与智能抽样 ===
+                target_idx = 2 if "Bandgap" in train_target else 4
+                target_csv_path = os.path.join(real_folder, target_csv)
+                
+                # 读取原始 CSV (不设 header 防止误删可能存在的第一行数据)
+                df_train_raw = pd.read_csv(target_csv_path, header=None)
+                
+                # 提取目标列并转为数字，将非数字强制转为 NaN
+                numeric_targets = pd.to_numeric(df_train_raw.iloc[:, target_idx], errors='coerce')
+                
+                # 过滤掉 NaN 和 < 0 的异常数据
+                valid_mask = (numeric_targets >= 0) & (numeric_targets.notna())
+                df_train_valid = df_train_raw[valid_mask]
+                
+                total_valid_count = len(df_train_valid)
+                if total_valid_count == 0:
+                    st.error("⚠️ 数据过滤完毕后，未能找到任何有效的训练样本（可能所有数值均 < 0 或表格格式不匹配），训练终止。")
+                    st.stop()
+                    
+                if total_valid_count > max_train_num:
+                    df_train_sampled = df_train_valid.sample(n=max_train_num, random_state=int(time.time()))
+                    st.success(f"✅ 剔除异常数据（<0）后，真实剩余 **{total_valid_count}** 个有效样本。已从中随机抽取 **{max_train_num}** 个进行训练。")
+                else:
+                    df_train_sampled = df_train_valid
+                    st.success(f"✅ 剔除异常数据后，真实剩余 **{total_valid_count}** 个有效样本 (未超过您设定的阈值)，将全量用于训练。")
+                
+                # 将抽样好的纯净数据单独写入工作目录
+                df_train_sampled.to_csv(os.path.join(data_dir, "id_prop.csv"), index=False, header=False)
+                
+                # 3. 挂载其余数据 (POSCAR) 到干净目录，跳过原始的脏 CSV
                 for item in os.listdir(real_folder):
-                    src_path = os.path.join(real_folder, item)
                     if item == target_csv:
-                        dst_path = os.path.join(data_dir, "id_prop.csv")
-                    else:
-                        dst_path = os.path.join(data_dir, item)
+                        continue 
+                    src_path = os.path.join(real_folder, item)
+                    dst_path = os.path.join(data_dir, item)
                     if os.path.isdir(src_path):
                         shutil.copytree(src_path, dst_path)
                     else:
                         shutil.copy2(src_path, dst_path)
                 
-                st.success(f"✅ 数据集挂载成功！(已自动将 {target_csv} 识别为训练标签)。开始运行...")
+                st.info("🎯 数据精洗准备就绪，开始执行深度图神经网络训练...")
                 
+                # 4. 加载训练超参数
                 with open(MODEL_FILES[train_target]['param_path'], 'r', encoding='utf-8') as f:
                     params = json.load(f)
                 
-                target_idx = 2 if "Bandgap" in train_target else 4
-                
+                # 5. 调用子进程
                 cmd = [
                     sys.executable, "main.py", data_dir,
                     "--epochs", str(params.get("epochs", 50) or 50),
@@ -498,6 +525,7 @@ elif app_mode == "⚙️ 模型训练模式":
                 total_epochs = int(params.get("epochs", 50) or 50)
                 
                 for line in process.stdout:
+                    # === 核心进阶：平滑进度条抗冻结，增加验证/测试状态嗅探 ===
                     full_match = re.search(r"Epoch:\s*\[(\d+)\]\[(\d+)/(\d+)\]", line)
                     if full_match:
                         curr_epoch = int(full_match.group(1))
@@ -506,12 +534,20 @@ elif app_mode == "⚙️ 模型训练模式":
                         fractional_epoch = curr_epoch + (curr_batch / total_batch)
                         prog = min(fractional_epoch / total_epochs, 1.0)
                         progress_bar.progress(prog)
+                        status.code(f"实时日志: {line.strip()}")
                     else:
                         epoch_match = re.search(r"Epoch: \[(\d+)\]", line)
                         if epoch_match:
                             curr = int(epoch_match.group(1))
                             progress_bar.progress(min(curr / total_epochs, 1.0))
-                    status.code(f"实时日志: {line.strip()}")
+                            status.code(f"实时日志: {line.strip()}")
+                        else:
+                            # 嗅探测试验证环节，解除停顿感
+                            test_match = re.search(r"Test:\s*\[(\d+)/(\d+)\]", line)
+                            if test_match:
+                                status.code(f"正在进行验证/测试评估 ({test_match.group(1)}/{test_match.group(2)})...")
+                            else:
+                                status.code(f"实时日志: {line.strip()}")
                 
                 process.wait()
                 if process.returncode == 0:
