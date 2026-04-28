@@ -1,8 +1,8 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch
 streamlit
-numpy
-pymatgen
+numpy==1.26.4
+pymatgen==2023.12.18
 py3Dmol
 stmol
 ipython-genutils
