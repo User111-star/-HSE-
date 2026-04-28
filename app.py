@@ -75,7 +75,8 @@ def load_database():
         if 'index_label' in df.columns:
             df['index_label'] = df['index_label'].astype(str).str.strip()
         return df
-    except: return pd.DataFrame()
+    except Exception: 
+        return pd.DataFrame()
 
 @st.cache_resource
 def load_all_models():
@@ -83,7 +84,8 @@ def load_all_models():
     for key, info in MODEL_FILES.items():
         try:
             models[key] = SinglePredictor(info["model_path"], info["param_path"], ATOM_INIT_PATH)
-        except: models[key] = None
+        except Exception: 
+            models[key] = None
     return models
 
 def render_crystal(poscar_path):
@@ -104,20 +106,30 @@ models = load_all_models()
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2000/2000885.png", width=80)
     st.markdown("## 🧭 系统导航")
+    
     app_mode = st.radio("选择运行模式：", ["🔮 模型预测模式", "⚙️ 模型训练模式"], index=0)
     st.markdown("---")
     
     if app_mode == "🔮 模型预测模式":
-        target_prop = st.radio("🎯 选择预测目标：", list(MODEL_FILES.keys()), index=0)
-        st.markdown("### 🧬 当前使用的超参数")
+        st.markdown("### 🎯 预测配置")
+        target_prop = st.radio("选择预测目标：", list(MODEL_FILES.keys()), index=0)
+        
+        st.markdown("### 🧬 当前模型超参数")
         try:
             with open(MODEL_FILES[target_prop]['param_path'], 'r', encoding='utf-8') as f:
                 params = json.load(f)
-            p_html = "".join([f"<div style='display:flex; justify-content:space-between; margin-bottom:8px;'><span>{k}</span><strong>{v:.4g if isinstance(v, float) else v}</strong></div>" for k,v in params.items()])
+            p_html = ""
+            for k, v in params.items():
+                display_v = f"{v:.4g}" if isinstance(v, float) else v
+                p_html += f"<div style='display:flex; justify-content:space-between; margin-bottom:8px;'><span>{k}</span><strong>{display_v}</strong></div>"
             st.markdown(f"<div class='param-box'>{p_html}</div>", unsafe_allow_html=True)
-        except: pass
+        except Exception: 
+            st.warning("未找到参数文件")
+            
     else:
-        train_target = st.radio("🎯 选择训练任务：", list(MODEL_FILES.keys()), index=0)
+        st.markdown("### 🎯 训练任务选择")
+        train_target = st.radio("选择训练任务：", list(MODEL_FILES.keys()), index=0)
+        st.success(f"已挂载【{train_target}】的预设超参数")
 
 st.markdown("<div class='main-title'>CGCNN 晶体性质智能平台</div>", unsafe_allow_html=True)
 st.markdown("<div class='sub-title'>基于图神经网络与贝叶斯优化的第一性原理精度替代模型</div>", unsafe_allow_html=True)
@@ -136,7 +148,8 @@ if app_mode == "🔮 模型预测模式":
                 st.markdown("<div class='viewer-container'>", unsafe_allow_html=True)
                 showmol(render_crystal("POSCAR"), height=500, width=600)
                 st.markdown("</div>", unsafe_allow_html=True)
-            except: pass
+            except Exception: 
+                pass
 
     with col_r:
         st.markdown("### 📊 运算结果区")
@@ -175,7 +188,8 @@ if app_mode == "🔮 模型预测模式":
         <div style="font-size: 0.9rem; color: #e74c3c; font-weight:bold;">(相对误差: {rel_err:.2f}%)</div>
     </div>
 </div>"""
-                                except: error_html = "<div style='margin-top:15px; color:red;'>❌ 匹配成功但数据库数值格式有误。</div>"
+                                except Exception: 
+                                    error_html = "<div style='margin-top:15px; color:red;'>❌ 匹配成功但数据库数值格式有误。</div>"
                         
                         st.markdown(f"""
 <div class="result-card">
@@ -184,7 +198,8 @@ if app_mode == "🔮 模型预测模式":
     <div style="color: #27ae60; font-weight: 500; margin-bottom: 10px;">✓ 预测成功</div>
     {error_html}
 </div>""", unsafe_allow_html=True)
-                    except Exception as e: st.error(f"❌ 预测出错: {e}")
+                    except Exception as e: 
+                        st.error(f"❌ 预测出错: {e}")
 
 # --- 7. 训练模式界面 ---
 elif app_mode == "⚙️ 模型训练模式":
@@ -201,13 +216,13 @@ elif app_mode == "⚙️ 模型训练模式":
         test_r = c3.number_input("测试集", 0.0, 1.0, 0.1, 0.05)
         
         valid = round(train_r + val_r + test_r, 2) == 1.0
-        if not valid: st.error(f"⚠️ 比例总和必须为 1.0 (当前: {train_r+val_r+test_r:.2f})")
+        if not valid: 
+            st.error(f"⚠️ 比例总和必须为 1.0 (当前: {train_r+val_r+test_r:.2f})")
         st.markdown("</div>", unsafe_allow_html=True)
 
         if st.button("🚀 启动模型训练", use_container_width=True, disabled=not (valid and uploaded_dataset)):
             # --- 自动解压与过渡文件夹构建机制 ---
-            # 【修改这里】：引入时间戳，每次生成独一无二的文件夹名称
-            import time
+            # 引入时间戳，每次生成独一无二的文件夹名称
             run_id = str(int(time.time()))
             temp_root = f"temp_run_{run_id}"
             data_dir = f"temp_dataset_{run_id}"
@@ -219,21 +234,21 @@ elif app_mode == "⚙️ 模型训练模式":
             try:
                 # 1. 解压
                 zip_path = os.path.join(temp_root, "data.zip")
-                with open(zip_path, "wb") as f: f.write(uploaded_dataset.getbuffer())
-                with zipfile.ZipFile(zip_path, 'r') as z: z.extractall(temp_root)
+                with open(zip_path, "wb") as f: 
+                    f.write(uploaded_dataset.getbuffer())
+                with zipfile.ZipFile(zip_path, 'r') as z: 
+                    z.extractall(temp_root)
                 
                 # 2. 智能寻路：查找包含 POSCAR 和 CSV 的目录
                 real_folder = None
                 target_csv = None
                 for r, d, files in os.walk(temp_root):
-                    # 找找有没有 csv 文件
                     csv_files = [f for f in files if f.endswith('.csv')]
-                    # 找找有没有 POSCAR 文件
                     has_poscar = any("POSCAR" in f for f in files)
                     
                     if csv_files and has_poscar:
                         real_folder = r
-                        target_csv = csv_files[0]  # 抓取找到的 CSV 名字
+                        target_csv = csv_files[0]  
                         break
                 
                 if not real_folder:
@@ -245,7 +260,7 @@ elif app_mode == "⚙️ 模型训练模式":
                     src_path = os.path.join(real_folder, item)
                     
                     if item == target_csv:
-                        # 核心修复：把你压缩包里的 predict.csv 强行改名为 main.py 认识的 id_prop.csv
+                        # 核心修复：把压缩包里的 csv 强行改名为 main.py 认识的 id_prop.csv
                         dst_path = os.path.join(data_dir, "id_prop.csv")
                     else:
                         dst_path = os.path.join(data_dir, item)
@@ -257,8 +272,8 @@ elif app_mode == "⚙️ 模型训练模式":
                 
                 st.success(f"✅ 数据集挂载成功！(已自动将 {target_csv} 识别为训练标签)。开始运行...")
                 
-                # 4. 读取 JSON 参数
-                with open(MODEL_FILES[train_target]['param_path'], 'r') as f:
+                # 4. 读取 JSON 参数 (严格绑定 train_target 并加上 encoding='utf-8')
+                with open(MODEL_FILES[train_target]['param_path'], 'r', encoding='utf-8') as f:
                     params = json.load(f)
                 
                 # 5. 调用子进程
@@ -273,13 +288,13 @@ elif app_mode == "⚙️ 模型训练模式":
                     "--val-ratio", str(val_r),
                     "--test-ratio", str(test_r),
                     
-                    # 【修复 1】：补全遗漏的 JSON 核心超参数
+                    # 补全遗漏的 JSON 核心超参数
                     "--n-conv", str(params.get("n_conv", 3) or 3),
                     "--atom-fea-len", str(params.get("atom_fea_len", 64) or 64),
-                    "--optim", str(params.get("optim", "SGD")),
+                    "--optim", str(params.get("optim", "SGD") or "SGD"),
                     "--weight-decay", str(params.get("weight_decay", 0) or 0),
                     
-                    # 【修复 2】：强行给 target 传一个默认值 (0)，防止 args.target 变 None 导致崩溃
+                    # 强行给 target 传一个默认值 (0)
                     "--target", "0" 
                 ]
                 
@@ -297,6 +312,21 @@ elif app_mode == "⚙️ 模型训练模式":
                 process.wait()
                 if process.returncode == 0:
                     st.success("🎉 训练圆满完成！新模型已就绪。")
+                    
+                    # === 新增：自动寻找生成的文件并提供下载按钮 ===
+                    st.markdown("### 📥 下载训练成果")
+                    st.info("⚠️ 请及时下载！如果网页休眠或刷新，这些文件可能会被系统重置清除。")
+                    
+                    for file_name in os.listdir("."):
+                        if "model_best" in file_name or "test_results" in file_name:
+                            with open(file_name, "rb") as f:
+                                file_bytes = f.read()
+                                st.download_button(
+                                    label=f"💾 下载 {file_name}",
+                                    data=file_bytes,
+                                    file_name=file_name,
+                                    mime="application/octet-stream"
+                                )
                 else:
                     st.error("❌ 训练异常终止，请检查日志。")
                     
@@ -307,9 +337,11 @@ elif app_mode == "⚙️ 模型训练模式":
 
     with col_t2:
         st.markdown("<div class='train-card'>", unsafe_allow_html=True)
-        st.markdown("### 🧬 预设超参数预览")
+        # 动态切换标题和展示内容
+        st.markdown(f"### 🧬 {train_target.split(' ')[0]} 超参数预览")
         try:
-            with open(MODEL_FILES[train_target]['param_path'], 'r') as f:
+            with open(MODEL_FILES[train_target]['param_path'], 'r', encoding='utf-8') as f:
                 st.json(json.load(f))
-        except: st.warning("参数文件读取失败")
+        except Exception: 
+            st.warning("参数文件读取失败")
         st.markdown("</div>", unsafe_allow_html=True)
