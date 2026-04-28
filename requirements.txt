@@ -10,3 +10,5 @@ ipywidgets
 pandas
 scikit-learn
 openpyxl
+matplotlib
+seaborn
