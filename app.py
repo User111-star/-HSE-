@@ -2,237 +2,279 @@ import streamlit as st
 import os
 import json
 import py3Dmol
-import pandas as pd
-import time
 from stmol import showmol
 from pymatgen.core.structure import Structure
 from predict_api import SinglePredictor
 
-# --- 1. 页面基本配置 ---
+# --- 1. 页面基本配置 (必须在最上面) ---
 st.set_page_config(
-    page_title="HSE 量子晶体预测实验室",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    page_title="HSE 晶体性质预测平台",
+    layout="wide",  # 改为宽屏模式，更大气
+    initial_sidebar_state="expanded",
+    page_icon=""
 )
 
-# 初始化 Session State
-if 'step' not in st.session_state:
-    st.session_state.step = 1
-if 'prediction_result' not in st.session_state:
-    st.session_state.prediction_result = None
-if 'uploaded_file_name' not in st.session_state:
-    st.session_state.uploaded_file_name = ""
 
-# --- 2. 核心 CSS 注入 (量子星云背景 + 霓虹卡片 + 对撞对比框) ---
-def inject_ui_css():
-    # 动态背景：步骤2使用沉浸式星空
-    bg_style = """
-        background: radial-gradient(ellipse at bottom, #1B2735 0%, #090A0F 100%);
-        overflow: hidden;
-    """ if st.session_state.step == 2 else "background: #f8f9fa;"
-
-    st.markdown(f"""
+# --- 2. 自定义 CSS 注入 (注入科技感) ---
+def local_css():
+    st.markdown("""
     <style>
-        /* 隐藏默认 UI，保留 Header 以免侧边栏消失 */
-        #MainMenu, footer {{ visibility: hidden; }}
-        .stApp {{ {bg_style} }}
-        
-        /* 侧边栏宽度优化 */
-        [data-testid="stSidebar"] {{ min-width: 350px !important; }}
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
 
-        /* 动画：星云呼吸感 */
-        @keyframes nebula-breathe {{
-            0% {{ opacity: 0.4; transform: scale(1); }}
-            50% {{ opacity: 0.7; transform: scale(1.1); }}
-            100% {{ opacity: 0.4; transform: scale(1); }}
-        }}
-        .nebula-bg {{
-            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-            background: 
-                radial-gradient(circle at 20% 30%, rgba(79, 172, 254, 0.15) 0%, transparent 50%),
-                radial-gradient(circle at 80% 70%, rgba(142, 68, 173, 0.15) 0%, transparent 50%);
-            animation: nebula-breathe 8s infinite ease-in-out;
-            z-index: -1;
-        }}
+        .stApp {
+            background-color: #f8f9fa;
+        }
 
-        /* 预测结果：霓虹发光卡片 */
-        .neon-result-box {{
-            background: rgba(255, 255, 255, 0.03);
-            backdrop-filter: blur(15px);
-            border-radius: 24px;
-            padding: 40px;
-            border: 1px solid rgba(0, 242, 254, 0.2);
-            box-shadow: 0 0 50px rgba(0, 242, 254, 0.1);
-            text-align: right;
-            margin-top: 5vh;
-        }}
-        .neon-value {{
-            font-size: 6rem;
-            font-weight: 900;
-            color: #00f2fe;
-            text-shadow: 0 0 20px rgba(0, 242, 254, 0.8);
-            line-height: 1.1;
-        }}
-        .neon-label {{ color: #bdc3c7; letter-spacing: 5px; text-transform: uppercase; font-size: 1rem; }}
+        .main-title {
+            font-size: 3rem;
+            font-weight: 800;
+            background: -webkit-linear-gradient(45deg, #2e86c1, #8e44ad);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0rem;
+            text-align: center;
+        }
+        .sub-title {
+            font-size: 1.2rem;
+            color: #7f8c8d;
+            text-align: center;
+            margin-bottom: 2rem;
+        }
 
-        /* 量子对撞对比框 (可视化增强) */
-        .collision-box {{
-            background: rgba(0, 242, 254, 0.08);
-            border: 1px dashed rgba(0, 242, 254, 0.4);
-            border-radius: 20px;
-            padding: 25px;
-            margin-top: 25px;
-        }}
-        .collision-grid {{ display: flex; justify-content: space-between; align-items: center; margin: 15px 0; }}
-        .vs-circle {{
-            width: 45px; height: 45px; border-radius: 50%; background: #00f2fe; color: #000;
-            display: flex; align-items: center; justify-content: center; font-weight: 900;
-            box-shadow: 0 0 20px #00f2fe;
-        }}
-        .accuracy-bar {{ height: 5px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden; }}
-        .accuracy-fill {{ height: 100%; background: linear-gradient(to right, #4facfe, #00ff88); transition: width 2s ease-out; }}
-        
-        .spotlight {{
-            background: radial-gradient(circle at center, rgba(0, 242, 254, 0.2) 0%, transparent 70%);
-            border-radius: 50%;
-        }}
+        .result-card {
+            background: linear-gradient(135deg, #ffffff 0%, #f1f8ff 100%);
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.05);
+            text-align: center;
+            border-left: 6px solid #2e86c1;
+            margin-top: 20px;
+        }
+        .result-value {
+            font-size: 3.5rem;
+            font-weight: 700;
+            color: #2c3e50;
+            margin: 10px 0;
+        }
+        .result-label {
+            font-size: 1.2rem;
+            color: #34495e;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .param-box {
+            background-color: rgba(255,255,255,0.1);
+            border-radius: 8px;
+            padding: 15px;
+            border-left: 4px solid #8e44ad;
+            margin-bottom: 15px;
+        }
+
+        .stButton>button {
+            width: 100%;
+            border-radius: 8px;
+            height: 50px;
+            font-size: 1.2rem;
+            font-weight: 600;
+            background: linear-gradient(to right, #3498db, #2980b9);
+            color: white;
+            border: none;
+            box-shadow: 0 4px 6px rgba(52, 152, 219, 0.3);
+            transition: all 0.3s ease;
+        }
+        .stButton>button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(52, 152, 219, 0.4);
+            color: white;
+        }
+
+        /* 针对 3D 视图的外层容器，辅助居中 */
+        .viewer-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+            margin-top: 15px;
+        }
     </style>
     """, unsafe_allow_html=True)
 
-inject_ui_css()
 
-# --- 3. 数据库与模型加载 ---
+local_css()
+
+# --- 3. 配置文件名及路径 ---
 MODEL_FILES = {
-    "带隙 (Bandgap)": {"model_path": "贝叶斯优化的HSE带隙预测模型.tar", "param_path": "贝叶斯优化的HSE带隙预测模型相关参数.json", "unit": "eV"},
-    "晶格常数 (Lattice)": {"model_path": "贝叶斯优化的HSE晶格预测模型.tar", "param_path": "贝叶斯优化的HSE晶格预测模型参数.json", "unit": "Å"}
+    "带隙 (Bandgap)": {
+        "model_path": "贝叶斯优化的HSE带隙预测模型.tar",
+        "param_path": "贝叶斯优化的HSE带隙预测模型相关参数.json",
+        "unit": "eV",
+        "icon": ""
+    },
+    "晶格常数 (Lattice)": {
+        "model_path": "贝叶斯优化的HSE晶格预测模型.tar",
+        "param_path": "贝叶斯优化的HSE晶格预测模型参数.json",
+        "unit": "Å",
+        "icon": "🧊"
+    }
 }
+ATOM_INIT_PATH = "atom_init.json"
 
-@st.cache_data
-def load_target_database():
-    try:
-        # 读取上传的 predict.csv 文件
-        return pd.read_csv("predict.csv")
-    except:
-        return None
 
+# --- 4. 缓存模型加载函数 ---
 @st.cache_resource
-def get_predictors():
-    return {k: SinglePredictor(v["model_path"], v["param_path"], "atom_init.json") for k, v in MODEL_FILES.items()}
+def load_all_models():
+    """初始化预测器"""
+    bg_info = MODEL_FILES["带隙 (Bandgap)"]
+    bg_predictor = SinglePredictor(bg_info["model_path"], bg_info["param_path"], ATOM_INIT_PATH)
 
-target_db = load_target_database()
-predictors = get_predictors()
+    la_info = MODEL_FILES["晶格常数 (Lattice)"]
+    la_predictor = SinglePredictor(la_info["model_path"], la_info["param_path"], ATOM_INIT_PATH)
 
-# --- 4. 侧边栏：参数科学计数法展示 ---
+    return {"带隙 (Bandgap)": bg_predictor, "晶格常数 (Lattice)": la_predictor}
+
+
+# 修改：将晶体渲染的长宽大幅调大
+def render_crystal_structure(poscar_path):
+    """利用 pymatgen 读取 POSCAR 并用 py3Dmol 渲染 3D 晶体"""
+    struct = Structure.from_file(poscar_path)
+    cif_string = struct.to(fmt="cif")
+
+    # 调大长宽：由原先的 450x400 改为 600x500
+    view = py3Dmol.view(width=600, height=500)
+    view.addModel(cif_string, 'cif')
+    view.setStyle({'sphere': {'colorscheme': 'Jmol', 'scale': 0.3},
+                   'stick': {'colorscheme': 'Jmol', 'radius': 0.1}})
+    view.addUnitCell()
+    view.zoomTo()
+    return view
+
+
+try:
+    with st.spinner(" 正在初始化深度学习引擎，装载 HSE 参数..."):
+        models = load_all_models()
+except Exception as e:
+    st.error(f" 模型初始化失败！请检查文件位置。错误详情: {e}")
+    st.stop()
+
+# --- 5. 侧边栏：高颜值监控面板 ---
 with st.sidebar:
-    st.markdown("## ⚙️ 预测配置中枢")
-    target_prop = st.radio("选择预测目标", list(MODEL_FILES.keys()), disabled=(st.session_state.step == 2))
-    
+    st.image("https://cdn-icons-png.flaticon.com/512/2000/2000885.png", width=80)
+    st.markdown("##  预测配置中枢")
     st.markdown("---")
-    st.markdown("### 📊 贝叶斯最优参数")
-    with open(MODEL_FILES[target_prop]['param_path'], 'r') as f:
-        params = json.load(f)
-    
-    icons = {"lr": "⚡ 学习率", "n_conv": "🔄 卷积层", "atom_fea_len": "🧬 原子特征", "batch_size": "📦 批大小", "h_fea_len": "🧠 隐藏层维度"}
-    
-    param_html = ""
-    for k, v in params.items():
-        name = icons.get(k, k)
-        # 使用科学计数法格式化显示长浮动数
-        disp_v = f"{v:.4g}" if isinstance(v, float) else v
-        param_html += f"<div style='display:flex; justify-content:space-between; margin-bottom:8px;'><span>{name}</span><strong>{disp_v}</strong></div>"
-    st.markdown(f"<div style='background:rgba(0,0,0,0.05); padding:15px; border-radius:10px;'>{param_html}</div>", unsafe_allow_html=True)
 
-# --- 5. 页面流程渲染 ---
+    target_property = st.radio(
+        " 选择预测目标：",
+        ["带隙 (Bandgap)", "晶格常数 (Lattice)"],
+        index=0
+    )
 
-# 【步骤 1：输入与计算】
-if st.session_state.step == 1:
-    st.markdown("<br><br><h1 style='text-align:center;'>CGCNN 晶体性质预测平台</h1>", unsafe_allow_html=True)
-    _, col_mid, _ = st.columns([1, 1.5, 1])
-    
-    with col_mid:
-        uploaded_file = st.file_uploader("上传 POSCAR 文件", type=None)
-        if uploaded_file:
-            st.session_state.uploaded_file_name = uploaded_file.name
-            # 🚨 强制重命名为 POSCAR，解决 pymatgen 读取兼容性
-            with open("POSCAR", "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            
-            st.success(f"✅ 结构 {uploaded_file.name} 已就绪")
-            if st.button("🚀 启动量子推演", use_container_width=True):
-                with st.spinner("正在执行图卷积运算..."):
-                    res = predictors[target_prop].predict("POSCAR")
-                    st.session_state.prediction_result = res
-                    st.session_state.step = 2
-                    st.rerun()
+    st.markdown("---")
+    st.markdown("###  贝叶斯最优超参数")
 
-# 【步骤 2：沉浸式结果 + 对撞机对比】
-else:
-    st.markdown('<div class="nebula-bg"></div>', unsafe_allow_html=True)
-    if st.button("← 返回实验室"):
-        st.session_state.step = 1
-        st.rerun()
+    try:
+        param_file = MODEL_FILES[target_property]['param_path']
+        with open(param_file, 'r', encoding='utf-8') as f:
+            best_params = json.load(f)
 
-    col_view, col_res = st.columns([1.2, 0.8], gap="large")
+        param_html = ""
+        for key, value in best_params.items():
+            display_name = key
+            if key == "lr":
+                display_name = " 学习率 (LR)"
+            elif key == "n_conv":
+                display_name = " 卷积层数"
+            elif key == "atom_fea_len":
+                display_name = "🧬 原子特征长"
+            elif key == "batch_size":
+                display_name = " 批处理大小"
+            elif key == "h_fea_len":
+                display_name = "🧠 隐藏层维度"
+            else:
+                display_name = f" {key}"
+            #  新增这段逻辑：如果值是超长小数，就格式化为科学计数法
+            display_value = value
+            if isinstance(value, float):
+                # .4g 表示保留4位有效数字，非常长的小数会自动变成类似 7.265e-04 的格式
+                display_value = f"{value:.4g}"
 
-    with col_view:
-        st.markdown("<h3 style='text-align:center; color:white;'>🔮 晶体空间拓扑态</h3>", unsafe_allow_html=True)
-        st.markdown("<div class='spotlight'>", unsafe_allow_html=True)
-        # 3D 渲染：背景透明，高亮度原子
-        struct = Structure.from_file("POSCAR")
-        view = py3Dmol.view(width=800, height=700)
-        view.addModel(struct.to(fmt="cif"), 'cif')
-        view.setStyle({'sphere': {'colorscheme': 'Jmol', 'scale': 0.35}, 'stick': {'color': '#ffffff', 'radius': 0.15}})
-        view.addUnitCell({'color': '#00f2fe'})
-        view.zoomTo()
-        view.setBackgroundColor('#000000', 0)
-        showmol(view, height=700, width=800)
-        st.markdown("</div>", unsafe_allow_html=True)
+            param_html += f"<div style='display:flex; justify-content:space-between; margin-bottom:8px;'><span>{display_name}</span><strong>{display_value}</strong></div>"
 
-    with col_res:
-        name_only = target_prop.split(" ")[0]
-        val = st.session_state.prediction_result
-        unit = MODEL_FILES[target_prop]["unit"]
-        
-        # 霓虹结果显示
-        st.markdown(f"""
-            <div class="neon-result-box">
-                <div class="neon-label">PREDICTED {name_only}</div>
-                <div class="neon-value">{val:.4f}<span style="font-size:2rem; color:#a29bfe;"> {unit}</span></div>
+        st.markdown(f"<div class='param-box'>{param_html}</div>", unsafe_allow_html=True)
+
+    except Exception as e:
+        st.warning(f"无法读取参数详情: {e}")
+
+    st.markdown("---")
+    st.caption(" Powered by CGCNN & Bayesian Optimization")
+
+# --- 6. 主界面：Dashboard 布局 ---
+
+st.markdown("<div class='main-title'>CGCNN 晶体性质智能预测平台</div>", unsafe_allow_html=True)
+st.markdown("<div class='sub-title'>基于图神经网络与贝叶斯优化的第一性原理精度替代模型</div>", unsafe_allow_html=True)
+
+col_left, col_space, col_right = st.columns([1.2, 0.1, 1])
+
+with col_left:
+    st.markdown("###  数据输入区")
+    st.info("请上传标准格式的 `POSCAR` 文件。系统将自动解析晶体结构并提取图节点特征。")
+    uploaded_file = st.file_uploader("", help="支持 VASP POSCAR 格式文件")
+
+    if uploaded_file:
+        temp_poscar_path = "POSCAR"
+        with open(temp_poscar_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+
+        st.success(" 文件结构解析完毕，已就绪。")
+
+        # 将标题居中
+        st.markdown("<h4 style='text-align: center; margin-top: 20px;'>🧊 晶体结构三维交互预览</h4>",
+                    unsafe_allow_html=True)
+        try:
+            # 将 3D 渲染放进 Flex 居中容器中
+            st.markdown("<div class='viewer-container'>", unsafe_allow_html=True)
+            view = render_crystal_structure(temp_poscar_path)
+            # 这里的 showmol 长宽也需要同步修改
+            showmol(view, height=500, width=600)
+            st.markdown("</div>", unsafe_allow_html=True)
+        except Exception as e:
+            st.warning(f"无法渲染 3D 结构，但这不影响属性预测。错误信息: {e}")
+
+with col_right:
+    st.markdown("###  运算结果区")
+
+    if not uploaded_file:
+        st.markdown(
+            """
+            <div style='text-align:center; padding: 50px; background-color:#f1f3f4; border-radius: 10px; color:#9aa0a6; border: 2px dashed #dadce0;'>
+                <h4>等待上传 POSCAR 数据...</h4>
+                <p>上传文件后，点击下方预测按钮即可获取高精度预测结果。</p>
             </div>
-        """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True
+        )
 
-        # 核心逻辑：自动从 predict.csv 中检索对比
-        search_id = st.session_state.uploaded_file_name.split('.')[0].strip()
-        if target_db is not None:
-            # 搜索 Name 列是否存在匹配
-            match = target_db[target_db['Name'].astype(str).str.strip() == search_id]
-            if not match.empty:
-                # 获取对应的目标值
-                db_col = 'Bandgap' if "Bandgap" in target_prop else 'Lattice'
-                true_val = match[db_col].values[0]
-                
-                # 计算置信度 (1 - 相对误差)
-                acc = max(0, 100 - (abs(val-true_val)/true_val*100)) if true_val != 0 else 0
-                
-                # 展示量子对比对撞机
-                st.markdown(f"""
-                    <div class="collision-box">
-                        <div style="color:#00f2fe; font-size:0.9rem; letter-spacing:2px; font-weight:bold;">✦ 发现数据库匹配: {search_id} ✦</div>
-                        <div class="collision-grid">
-                            <div style="text-align:center;">
-                                <small style="color:rgba(255,255,255,0.5);">模型预测</small>
-                                <div style="font-size:1.6rem; color:#00f2fe; font-weight:bold;">{val:.4f}</div>
-                            </div>
-                            <div class="vs-circle">VS</div>
-                            <div style="text-align:center;">
-                                <small style="color:rgba(255,255,255,0.5);">目标值 (HSE)</small>
-                                <div style="font-size:1.6rem; color:#a29bfe; font-weight:bold;">{true_val:.4f}</div>
-                            </div>
+    if uploaded_file:
+        if st.button(" 启动前向传播预测"):
+            with st.spinner("🧠 正在提取图结构特征并进行张量运算..."):
+                try:
+                    predictor = models[target_property]
+                    result_val = predictor.predict(temp_poscar_path)
+
+                    unit = MODEL_FILES[target_property]["unit"]
+                    icon = MODEL_FILES[target_property]["icon"]
+                    prop_name = target_property.split(" ")[0]
+
+                    st.markdown(
+                        f"""
+                        <div class="result-card">
+                            <div class="result-label">{icon} 目标性质: {prop_name}</div>
+                            <div class="result-value">{result_val:.4f} <span style="font-size: 1.5rem; color:#7f8c8d;">{unit}</span></div>
+                            <div style="color: #27ae60; font-weight: 500;">✓ 预测成功</div>
                         </div>
-                        <div class="accuracy-bar"><div class="accuracy-fill" style="width:{acc}%;"></div></div>
-                        <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.85rem; color:#00ff88;">
-                            <span>误差: {abs(val-true_val):.4f}</span>
-                            <span>模型置信度: {acc:.1f}%</span>
-                        </div>
-                    </div>
-                """, unsafe_allow_html=True)
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+                except Exception as e:
+                    st.error(f" 运算网络出错: {e}")
