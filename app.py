@@ -321,6 +321,19 @@ if app_mode == "🔮 模型预测模式":
                     else:
                         target_idx = 2 if "Bandgap" in target_prop else 4
                         
+                        # === 🚀 核心优化：构建真值表字典进行 O(1) 极速哈希查找 ===
+                        true_val_dict = {}
+                        if df_batch is not None:
+                            try:
+                                # 强制转数字，并剥离首尾空格
+                                df_batch['target'] = pd.to_numeric(df_batch.iloc[:, target_idx], errors='coerce')
+                                for _, row in df_batch.iterrows():
+                                    k = str(row.iloc[0]).strip()
+                                    v = row['target']
+                                    if pd.notna(v):
+                                        true_val_dict[k] = v
+                            except: pass
+
                         valid_data_info = []
                         for p_path in poscar_files:
                             filename = os.path.basename(p_path)
@@ -330,19 +343,15 @@ if app_mode == "🔮 模型预测模式":
                                 nums = re.findall(r'\d+', parent_dir)
                             file_id = nums[0] if nums else "UNKNOWN"
                             
-                            true_val = np.nan
-                            if df_batch is not None and file_id != "UNKNOWN":
-                                match = df_batch[df_batch.iloc[:, 0].astype(str).str.strip() == str(file_id)]
-                                if not match.empty:
-                                    try:
-                                        true_val = float(match.iloc[0, target_idx])
-                                    except: pass
+                            # O(1) 极速提取真值
+                            true_val = true_val_dict.get(file_id, np.nan)
                             
                             if pd.notna(true_val) and true_val < 0:
                                 continue
                                 
                             valid_data_info.append((p_path, file_id, true_val))
-                        
+                        # =======================================================
+
                         total_valid_count = len(valid_data_info)
                         
                         if total_valid_count == 0:
@@ -416,7 +425,6 @@ elif app_mode == "⚙️ 模型训练模式":
         val_r = c2.number_input("验证集", 0.0, 1.0, 0.1, 0.05)
         test_r = c3.number_input("测试集", 0.0, 1.0, 0.1, 0.05)
         
-        # === 核心进阶：新增训练集的抽样控制器 ===
         max_train_num = st.number_input("期望用于训练的总样本数量 (将在剔除真值 <0 后随机抽取)", min_value=10, value=500, step=10)
         
         valid = round(train_r + val_r + test_r, 2) == 1.0
@@ -433,14 +441,12 @@ elif app_mode == "⚙️ 模型训练模式":
             os.makedirs(data_dir, exist_ok=True)
             
             try:
-                # 1. 解压数据
                 zip_path = os.path.join(temp_root, "data.zip")
                 with open(zip_path, "wb") as f: 
                     f.write(uploaded_dataset.getbuffer())
                 with zipfile.ZipFile(zip_path, 'r') as z: 
                     z.extractall(temp_root)
                 
-                # 2. 智能寻路：查找包含 POSCAR 和 CSV 的目录
                 real_folder = None
                 target_csv = None
                 for r, d, files in os.walk(temp_root):
@@ -455,17 +461,11 @@ elif app_mode == "⚙️ 模型训练模式":
                     st.error("❌ ZIP 包内未同时找到 `CSV表格` 和 `POSCAR` 文件，请确保它们放在同一个文件夹内！")
                     st.stop()
                 
-                # === 核心进阶：训练集数据前置过滤与智能抽样 ===
                 target_idx = 2 if "Bandgap" in train_target else 4
                 target_csv_path = os.path.join(real_folder, target_csv)
                 
-                # 读取原始 CSV (不设 header 防止误删可能存在的第一行数据)
                 df_train_raw = pd.read_csv(target_csv_path, header=None)
-                
-                # 提取目标列并转为数字，将非数字强制转为 NaN
                 numeric_targets = pd.to_numeric(df_train_raw.iloc[:, target_idx], errors='coerce')
-                
-                # 过滤掉 NaN 和 < 0 的异常数据
                 valid_mask = (numeric_targets >= 0) & (numeric_targets.notna())
                 df_train_valid = df_train_raw[valid_mask]
                 
@@ -481,10 +481,8 @@ elif app_mode == "⚙️ 模型训练模式":
                     df_train_sampled = df_train_valid
                     st.success(f"✅ 剔除异常数据后，真实剩余 **{total_valid_count}** 个有效样本 (未超过您设定的阈值)，将全量用于训练。")
                 
-                # 将抽样好的纯净数据单独写入工作目录
                 df_train_sampled.to_csv(os.path.join(data_dir, "id_prop.csv"), index=False, header=False)
                 
-                # 3. 挂载其余数据 (POSCAR) 到干净目录，跳过原始的脏 CSV
                 for item in os.listdir(real_folder):
                     if item == target_csv:
                         continue 
@@ -495,13 +493,12 @@ elif app_mode == "⚙️ 模型训练模式":
                     else:
                         shutil.copy2(src_path, dst_path)
                 
-                st.info("🎯 数据精洗准备就绪，开始执行深度图神经网络训练...")
+                # === 替换的文案 ===
+                st.info("🎯 数据精洗完成，开始执行深度图神经网络训练...")
                 
-                # 4. 加载训练超参数
                 with open(MODEL_FILES[train_target]['param_path'], 'r', encoding='utf-8') as f:
                     params = json.load(f)
                 
-                # 5. 调用子进程
                 cmd = [
                     sys.executable, "main.py", data_dir,
                     "--epochs", str(params.get("epochs", 50) or 50),
@@ -525,7 +522,6 @@ elif app_mode == "⚙️ 模型训练模式":
                 total_epochs = int(params.get("epochs", 50) or 50)
                 
                 for line in process.stdout:
-                    # === 核心进阶：平滑进度条抗冻结，增加验证/测试状态嗅探 ===
                     full_match = re.search(r"Epoch:\s*\[(\d+)\]\[(\d+)/(\d+)\]", line)
                     if full_match:
                         curr_epoch = int(full_match.group(1))
@@ -542,7 +538,6 @@ elif app_mode == "⚙️ 模型训练模式":
                             progress_bar.progress(min(curr / total_epochs, 1.0))
                             status.code(f"实时日志: {line.strip()}")
                         else:
-                            # 嗅探测试验证环节，解除停顿感
                             test_match = re.search(r"Test:\s*\[(\d+)/(\d+)\]", line)
                             if test_match:
                                 status.code(f"正在进行验证/测试评估 ({test_match.group(1)}/{test_match.group(2)})...")
