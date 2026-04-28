@@ -163,11 +163,9 @@ with col_r:
                     # 2. 全自动后台比对逻辑
                     error_html = ""
                     if not db_df.empty:
-                        # 【核心提取逻辑】：正则抠出纯数字，解决 POSCAR7 这种带字母的问题
                         nums = re.findall(r'\d+', uploaded_file.name)
                         file_id = nums[0] if nums else "UNKNOWN"
                         
-                        # 查找匹配
                         match = db_df[db_df['index_label'] == file_id]
                         if not match.empty:
                             col = 'Gap' if "Bandgap" in target_prop else 'lattice'
@@ -176,31 +174,33 @@ with col_r:
                                 abs_err = abs(res - t_val)
                                 rel_err = (abs_err / t_val * 100) if t_val != 0 else 0
                                 
+                                # 注意这里：HTML代码全都顶格写，防止被Markdown解析成代码块
                                 error_html = f"""
-                                <div style="display: flex; justify-content: space-around; margin-top: 20px; border-top: 2px solid #ecf0f1; padding-top: 20px;">
-                                    <div>
-                                        <div style="font-size: 1rem; color: #7f8c8d; text-transform: uppercase;">📊 数据库真实值 (ID:{file_id})</div>
-                                        <div style="font-size: 1.8rem; font-weight: 700; color: #2980b9;">{t_val:.4f} <span style="font-size: 1.2rem;">{unit}</span></div>
-                                    </div>
-                                    <div>
-                                        <div style="font-size: 1rem; color: #7f8c8d; text-transform: uppercase;">📉 预测误差</div>
-                                        <div style="font-size: 1.8rem; font-weight: 700; color: #e74c3c;">{abs_err:.4f} <span style="font-size: 1.2rem;">{unit}</span></div>
-                                        <div style="font-size: 0.9rem; color: #e74c3c; font-weight:bold;">(相对误差: {rel_err:.2f}%)</div>
-                                    </div>
-                                </div>
-                                """
-                            except: error_html = "<div style='margin-top:15px; color:red;'>❌ 匹配成功但数据库数值格式有误。</div>"
+<div style="display: flex; justify-content: space-around; margin-top: 20px; border-top: 2px solid #ecf0f1; padding-top: 20px;">
+    <div>
+        <div style="font-size: 1rem; color: #7f8c8d; text-transform: uppercase;">📊 数据库真实值 (ID:{file_id})</div>
+        <div style="font-size: 1.8rem; font-weight: 700; color: #2980b9;">{t_val:.4f} <span style="font-size: 1.2rem;">{unit}</span></div>
+    </div>
+    <div>
+        <div style="font-size: 1rem; color: #7f8c8d; text-transform: uppercase;">📉 预测误差</div>
+        <div style="font-size: 1.8rem; font-weight: 700; color: #e74c3c;">{abs_err:.4f} <span style="font-size: 1.2rem;">{unit}</span></div>
+        <div style="font-size: 0.9rem; color: #e74c3c; font-weight:bold;">(相对误差: {rel_err:.2f}%)</div>
+    </div>
+</div>
+"""
+                            except: 
+                                error_html = "<div style='margin-top:15px; color:red;'>❌ 匹配成功但数据库数值格式有误。</div>"
                         else:
                             error_html = f"<div style='margin-top:15px; color:#f39c12;'>⚠️ 未在数据库发现 ID 为 {file_id} 的对比记录。</div>"
 
-                    # 3. UI 渲染
+                    # 3. UI 渲染 (同样顶格写)
                     st.markdown(f"""
-                        <div class="result-card">
-                            <div class="result-label">{icon} 目标性质: {name}</div>
-                            <div class="result-value">{res:.4f} <span style="font-size: 1.5rem; color:#7f8c8d;">{unit}</span></div>
-                            <div style="color: #27ae60; font-weight: 500; margin-bottom: 10px;">✓ 预测成功</div>
-                            {error_html}
-                        </div>
-                    """, unsafe_allow_html=True)
+<div class="result-card">
+    <div class="result-label">{icon} 目标性质: {name}</div>
+    <div class="result-value">{res:.4f} <span style="font-size: 1.5rem; color:#7f8c8d;">{unit}</span></div>
+    <div style="color: #27ae60; font-weight: 500; margin-bottom: 10px;">✓ 预测成功</div>
+    {error_html}
+</div>
+""", unsafe_allow_html=True)
                 except Exception as e:
                     st.error(f"❌ 预测出错: {e}")
