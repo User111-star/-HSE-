@@ -292,36 +292,44 @@ with col_right:
                     icon = MODEL_FILES[target_property]["icon"]
                     prop_name = target_property.split(" ")[0]
 
-                    # 2. 提取数据库真实值并计算误差
+# 2. 提取数据库真实值并计算误差 (带强力纠错与状态提示)
                     error_html = ""
-                    if not db_df.empty and selected_material:
+                    if db_df.empty:
+                        error_html = "<div style='margin-top: 15px; color: #e74c3c; font-weight: bold;'>❌ 未读取到数据库 (predict.csv为空或路径不对)。</div>"
+                    elif not selected_material:
+                        error_html = "<div style='margin-top: 15px; color: #f39c12; font-weight: bold;'>⚠️ 未在左侧选择对应的材料名称，无法进行比对。</div>"
+                    else:
                         # 获取对应的真实值列名
                         target_col = 'Gap' if "Bandgap" in target_property else 'lattice'
                         
                         match_row = db_df[db_df['material'] == selected_material]
                         if not match_row.empty:
-                            true_val = match_row.iloc[0][target_col]
-                            
-                            # 计算误差
-                            abs_error = abs(result_val - true_val)
-                            rel_error = (abs_error / true_val) * 100 if true_val != 0 else 0
-                            
-                            # 渲染带误差比对的 HTML
-                            error_html = f"""
-                            <div style="display: flex; justify-content: space-around; margin-top: 20px; border-top: 2px solid #ecf0f1; padding-top: 20px;">
-                                <div>
-                                    <div style="font-size: 1rem; color: #7f8c8d; text-transform: uppercase;">📊 数据库真实值</div>
-                                    <div style="font-size: 1.8rem; font-weight: 700; color: #2980b9;">{true_val:.4f} <span style="font-size: 1.2rem;">{unit}</span></div>
+                            try:
+                                # 【关键修复】：强制转换为 float 浮点数，防止 Excel 里的数据被识别为字符串导致无法相减
+                                true_val = float(match_row.iloc[0][target_col])
+                                
+                                # 计算误差
+                                abs_error = abs(result_val - true_val)
+                                rel_error = (abs_error / true_val) * 100 if true_val != 0 else 0
+                                
+                                # 渲染带误差比对的 HTML
+                                error_html = f"""
+                                <div style="display: flex; justify-content: space-around; margin-top: 20px; border-top: 2px solid #ecf0f1; padding-top: 20px;">
+                                    <div>
+                                        <div style="font-size: 1rem; color: #7f8c8d; text-transform: uppercase;">📊 数据库真实值</div>
+                                        <div style="font-size: 1.8rem; font-weight: 700; color: #2980b9;">{true_val:.4f} <span style="font-size: 1.2rem;">{unit}</span></div>
+                                    </div>
+                                    <div>
+                                        <div style="font-size: 1rem; color: #7f8c8d; text-transform: uppercase;">📉 预测误差</div>
+                                        <div style="font-size: 1.8rem; font-weight: 700; color: #e74c3c;">{abs_error:.4f} <span style="font-size: 1.2rem;">{unit}</span></div>
+                                        <div style="font-size: 0.9rem; color: #e74c3c; font-weight:bold;">(相对误差: {rel_error:.2f}%)</div>
+                                    </div>
                                 </div>
-                                <div>
-                                    <div style="font-size: 1rem; color: #7f8c8d; text-transform: uppercase;">📉 预测误差</div>
-                                    <div style="font-size: 1.8rem; font-weight: 700; color: #e74c3c;">{abs_error:.4f} <span style="font-size: 1.2rem;">{unit}</span></div>
-                                    <div style="font-size: 0.9rem; color: #e74c3c; font-weight:bold;">(相对误差: {rel_error:.2f}%)</div>
-                                </div>
-                            </div>
-                            """
+                                """
+                            except Exception as calc_err:
+                                error_html = f"<div style='margin-top: 15px; color: #e74c3c;'>❌ 计算误差时发生数据类型冲突: {calc_err}</div>"
                         else:
-                            error_html = "<div style='margin-top: 15px; color: #f39c12;'>⚠️ 数据库中未找到该材料的真实值记录。</div>"
+                            error_html = f"<div style='margin-top: 15px; color: #f39c12;'>⚠️ 数据库中未找到材料 [{selected_material}] 的记录。</div>"
 
                     # 3. 最终 UI 渲染
                     st.markdown(
