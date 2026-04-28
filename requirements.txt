@@ -2,7 +2,7 @@
 torch
 streamlit
 numpy==1.26.4
-pymatgen==2023.12.18
+pymatgen==2024.5.1
 py3Dmol
 stmol
 ipython-genutils
