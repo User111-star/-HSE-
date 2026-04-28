@@ -199,7 +199,7 @@ with st.sidebar:
                 # .4g 表示保留4位有效数字，非常长的小数会自动变成类似 7.265e-04 的格式
                 display_value = f"{value:.4g}"
 
-            param_html += f"<div style='display:flex; justify-content:space-between; margin-bottom:8px;'><span>{display_name}</span><strong>{value}</strong></div>"
+            param_html += f"<div style='display:flex; justify-content:space-between; margin-bottom:8px;'><span>{display_name}</span><strong>{display_value}</strong></div>"
 
         st.markdown(f"<div class='param-box'>{param_html}</div>", unsafe_allow_html=True)
 
