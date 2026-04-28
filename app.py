@@ -90,7 +90,6 @@ def local_css():
             color: white;
         }
 
-        /* 针对 3D 视图的外层容器，辅助居中 */
         .viewer-container {
             display: flex;
             justify-content: center;
@@ -126,12 +125,11 @@ def load_database():
     """加载预测数据库并修正数据类型"""
     try:
         df = pd.read_csv("predict.csv")
-        # 【关键修复】：强制将 index_label 转为字符串，解决匹配不到的问题
+        # 强制将 index_label 转为字符串，方便无缝匹配文件名
         if 'index_label' in df.columns:
             df['index_label'] = df['index_label'].astype(str)
         return df
     except Exception as e:
-        st.warning(f"⚠️ 无法加载数据库文件 predict.csv: {e}")
         return pd.DataFrame()
 
 @st.cache_resource
@@ -139,17 +137,14 @@ def load_all_models():
     """初始化预测器"""
     bg_info = MODEL_FILES["带隙 (Bandgap)"]
     bg_predictor = SinglePredictor(bg_info["model_path"], bg_info["param_path"], ATOM_INIT_PATH)
-
     la_info = MODEL_FILES["晶格常数 (Lattice)"]
     la_predictor = SinglePredictor(la_info["model_path"], la_info["param_path"], ATOM_INIT_PATH)
-
     return {"带隙 (Bandgap)": bg_predictor, "晶格常数 (Lattice)": la_predictor}
 
 def render_crystal_structure(poscar_path):
-    """利用 pymatgen 读取 POSCAR 并用 py3Dmol 渲染 3D 晶体"""
+    """利用 pymatgen 读取 POSCAR 并用 py3Dmol 渲染"""
     struct = Structure.from_file(poscar_path)
     cif_string = struct.to(fmt="cif")
-
     view = py3Dmol.view(width=600, height=500)
     view.addModel(cif_string, 'cif')
     view.setStyle({'sphere': {'colorscheme': 'Jmol', 'scale': 0.3},
@@ -161,13 +156,13 @@ def render_crystal_structure(poscar_path):
 # --- 提前加载依赖 ---
 db_df = load_database()
 try:
-    with st.spinner("🔄 正在初始化深度学习引擎，装载 HSE 参数..."):
+    with st.spinner("🔄 正在初始化深度学习引擎..."):
         models = load_all_models()
 except Exception as e:
-    st.error(f"❌ 模型初始化失败！请检查文件位置。错误详情: {e}")
+    st.error(f"❌ 模型初始化失败！错误详情: {e}")
     st.stop()
 
-# --- 5. 侧边栏：高颜值监控面板 ---
+# --- 5. 侧边栏 ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2000/2000885.png", width=80)
     st.markdown("## 🎛️ 预测配置中枢")
@@ -186,30 +181,15 @@ with st.sidebar:
         param_file = MODEL_FILES[target_property]['param_path']
         with open(param_file, 'r', encoding='utf-8') as f:
             best_params = json.load(f)
-
         param_html = ""
         for key, value in best_params.items():
-            display_name = key
-            if key == "lr": display_name = "📈 学习率 (LR)"
-            elif key == "n_conv": display_name = "🔗 卷积层数"
-            elif key == "atom_fea_len": display_name = "🧬 原子特征长"
-            elif key == "batch_size": display_name = "📦 批处理大小"
-            elif key == "h_fea_len": display_name = "🧠 隐藏层维度"
-            else: display_name = f"🔹 {key}"
-            
-            # 格式化超长小数
             display_value = f"{value:.4g}" if isinstance(value, float) else value
-            param_html += f"<div style='display:flex; justify-content:space-between; margin-bottom:8px;'><span>{display_name}</span><strong>{display_value}</strong></div>"
-
+            param_html += f"<div style='display:flex; justify-content:space-between; margin-bottom:8px;'><span>{key}</span><strong>{display_value}</strong></div>"
         st.markdown(f"<div class='param-box'>{param_html}</div>", unsafe_allow_html=True)
+    except:
+        pass
 
-    except Exception as e:
-        st.warning(f"无法读取参数详情: {e}")
-
-    st.markdown("---")
-    st.caption("🚀 Powered by CGCNN & Bayesian Optimization")
-
-# --- 6. 主界面：Dashboard 布局 ---
+# --- 6. 主界面 ---
 st.markdown("<div class='main-title'>CGCNN 晶体性质智能预测平台</div>", unsafe_allow_html=True)
 st.markdown("<div class='sub-title'>基于图神经网络与贝叶斯优化的第一性原理精度替代模型</div>", unsafe_allow_html=True)
 
@@ -217,7 +197,7 @@ col_left, col_space, col_right = st.columns([1.2, 0.1, 1])
 
 with col_left:
     st.markdown("### 📥 数据输入区")
-    st.info("请上传标准格式的 `POSCAR` 文件。系统将自动解析晶体结构并提取图节点特征。")
+    st.info("请上传标准格式的 `POSCAR` 文件 (文件名需包含对应的数字ID，如 '1.POSCAR')。")
     uploaded_file = st.file_uploader("", help="支持 VASP POSCAR 格式文件")
 
     if uploaded_file:
@@ -225,38 +205,7 @@ with col_left:
         with open(temp_poscar_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
 
-        # --- 数据库匹配逻辑 (基于数字ID的严格字符串匹配) ---
-        selected_material = None
-        if not db_df.empty:
-            material_list = db_df['material'].tolist()
-            default_idx = 0
-            
-            # 提取文件名去掉后缀的部分 (例如 '1.POSCAR' -> '1')
-            file_base_name = str(os.path.splitext(uploaded_file.name)[0])
-            
-            # 在 index_label 列中寻找匹配 (此时两边都是纯字符串)
-            match_row = db_df[db_df['index_label'] == file_base_name]
-            
-            if not match_row.empty:
-                matched_material_name = match_row.iloc[0]['material']
-                if matched_material_name in material_list:
-                    default_idx = material_list.index(matched_material_name)
-                    st.success(f"✅ **结构解析完毕！** 已自动识别到文件 ID: **{file_base_name}**，对应材料: **{matched_material_name}**")
-            else:
-                # 兼容处理：如果文件名不是数字，尝试全名匹配
-                if file_base_name in material_list:
-                    default_idx = material_list.index(file_base_name)
-                st.success("✅ **结构解析完毕！** 已就绪。")
-            
-            # 显示下拉框供用户确认或更改
-            selected_material = st.selectbox(
-                "🔍 请确认或手动选择该文件对应的材料 (用于数据库误差比对)：",
-                options=material_list,
-                index=default_idx
-            )
-        else:
-            st.success("✅ **结构解析完毕！** 已就绪。(未连接到数据库)")
-        # --------------------------------
+        st.success("✅ 文件上传并解析就绪。")
 
         st.markdown("<h4 style='text-align: center; margin-top: 20px;'>🧊 晶体结构三维交互预览</h4>", unsafe_allow_html=True)
         try:
@@ -265,7 +214,7 @@ with col_left:
             showmol(view, height=500, width=600)
             st.markdown("</div>", unsafe_allow_html=True)
         except Exception as e:
-            st.warning(f"无法渲染 3D 结构，但这不影响属性预测。错误信息: {e}")
+            pass
 
 with col_right:
     st.markdown("### 📊 运算结果区")
@@ -292,27 +241,28 @@ with col_right:
                     icon = MODEL_FILES[target_property]["icon"]
                     prop_name = target_property.split(" ")[0]
 
-# 2. 提取数据库真实值并计算误差 (带强力纠错与状态提示)
+                    # 2. 纯后台全自动提取数据库真实值并计算误差
                     error_html = ""
-                    if db_df.empty:
-                        error_html = "<div style='margin-top: 15px; color: #e74c3c; font-weight: bold;'>❌ 未读取到数据库 (predict.csv为空或路径不对)。</div>"
-                    elif not selected_material:
-                        error_html = "<div style='margin-top: 15px; color: #f39c12; font-weight: bold;'>⚠️ 未在左侧选择对应的材料名称，无法进行比对。</div>"
-                    else:
-                        # 获取对应的真实值列名
-                        target_col = 'Gap' if "Bandgap" in target_property else 'lattice'
+                    if not db_df.empty:
+                        # 从文件名提取 ID，例如 "1.POSCAR" -> "1"
+                        file_base_name = str(os.path.splitext(uploaded_file.name)[0])
                         
-                        match_row = db_df[db_df['material'] == selected_material]
+                        # 直接在数据库查找这个 ID
+                        match_row = db_df[db_df['index_label'] == file_base_name]
+                        
                         if not match_row.empty:
+                            # 判断目标属性获取对应列名
+                            target_col = 'Gap' if "Bandgap" in target_property else 'lattice'
+                            
                             try:
-                                # 【关键修复】：强制转换为 float 浮点数，防止 Excel 里的数据被识别为字符串导致无法相减
+                                # 强制转换为浮点数，防止计算错误
                                 true_val = float(match_row.iloc[0][target_col])
                                 
                                 # 计算误差
                                 abs_error = abs(result_val - true_val)
                                 rel_error = (abs_error / true_val) * 100 if true_val != 0 else 0
                                 
-                                # 渲染带误差比对的 HTML
+                                # 构建比对 HTML 卡片
                                 error_html = f"""
                                 <div style="display: flex; justify-content: space-around; margin-top: 20px; border-top: 2px solid #ecf0f1; padding-top: 20px;">
                                     <div>
@@ -326,12 +276,12 @@ with col_right:
                                     </div>
                                 </div>
                                 """
-                            except Exception as calc_err:
-                                error_html = f"<div style='margin-top: 15px; color: #e74c3c;'>❌ 计算误差时发生数据类型冲突: {calc_err}</div>"
+                            except Exception as e:
+                                error_html = f"<div style='margin-top: 15px; color: #e74c3c;'>❌ 计算对比时出错，检查数据库内数据是否包含字母。</div>"
                         else:
-                            error_html = f"<div style='margin-top: 15px; color: #f39c12;'>⚠️ 数据库中未找到材料 [{selected_material}] 的记录。</div>"
+                            error_html = f"<div style='margin-top: 15px; color: #f39c12;'>⚠️ 未在数据库找到 ID 为 <b>{file_base_name}</b> 的真实值记录，无法比对。</div>"
 
-                    # 3. 最终 UI 渲染
+                    # 3. 最终 UI 渲染 (一定要带 unsafe_allow_html=True)
                     st.markdown(
                         f"""
                         <div class="result-card">
