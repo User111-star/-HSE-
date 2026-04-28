@@ -13,6 +13,13 @@ from stmol import showmol
 from pymatgen.core.structure import Structure
 from predict_api import SinglePredictor
 
+# === 新增：画图所需的依赖包 ===
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+from matplotlib.ticker import FormatStrFormatter, MaxNLocator
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+
 # --- 1. 页面基本配置 ---
 st.set_page_config(
     page_title="HSE 晶体性质预测与训练平台",
@@ -97,6 +104,76 @@ def render_crystal(poscar_path):
     view.addUnitCell()
     view.zoomTo()
     return view
+
+# === 新增：二合一的散点图绘制函数 ===
+@st.cache_data
+def draw_scatter_plot(csv_path, target_type):
+    """根据测试结果 CSV 绘制散点图并返回 fig 对象"""
+    # 1. 读取数据
+    df_test = pd.read_csv(csv_path, header=None, names=['Index', 'Calculated', 'Predicted'])
+    y_true = df_test['Calculated'].values
+    y_pred = df_test['Predicted'].values
+
+    # 2. 计算误差
+    r2 = r2_score(y_true, y_pred)
+    mae = mean_absolute_error(y_true, y_pred)
+    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+    z = np.abs(y_true - y_pred) / np.sqrt(2)
+
+    # 3. 初始化画布
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ax.set_aspect('equal', adjustable='box')
+    scatter = ax.scatter(y_true, y_pred, c=z, cmap='viridis', s=30, alpha=0.8, edgecolor='none')
+
+    min_val = min(np.min(y_true), np.min(y_pred))
+    max_val = max(np.max(y_true), np.max(y_pred))
+
+    # 4. 根据目标类型动态切换 UI 设置
+    if "带隙" in target_type:
+        x_y_min = -0.1
+        x_y_max = max_val + 0.2
+        unit_str = " eV"
+        ax.set_xlabel(r'Calculated $E_{g\_HSE}$ (eV)', fontsize=16)
+        ax.set_ylabel(r'Predicted $E_{g\_HSE}$ (eV)', fontsize=16)
+        text_x = 0.40
+    else:  # 晶格常数
+        x_y_min = min_val - 0.1
+        x_y_max = max_val + 0.2
+        unit_str = ""
+        ax.set_xlabel(r'Calculated a_HSE (Å)', fontsize=16)
+        ax.set_ylabel(r'Predicted a_HSE (Å)', fontsize=16)
+        text_x = 0.50
+
+    # 5. 画对角线和设置刻度
+    ax.plot([x_y_min, x_y_max], [x_y_min, x_y_max], 'k--', lw=1, alpha=0.5)
+    ax.xaxis.set_major_formatter(FormatStrFormatter('%.1f'))
+    ax.yaxis.set_major_formatter(FormatStrFormatter('%.1f'))
+    ax.xaxis.set_major_locator(MaxNLocator(integer=False, nbins=6))
+    ax.yaxis.set_major_locator(MaxNLocator(integer=False, nbins=6))
+    ax.set_xlim([x_y_min, x_y_max])
+    ax.set_ylim([x_y_min, x_y_max])
+
+    # 6. 颜色条设置
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.1)
+    cbar = plt.colorbar(scatter, cax=cax)
+    cbar.ax.tick_params(labelsize=12)
+    cbar.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+    scatter.set_clim(vmin=0, vmax=np.max(z))
+    cbar.locator = MaxNLocator(nbins=6)
+    cbar.update_ticks()
+
+    # 7. 文本框
+    textstr = '\n'.join((
+        r'$R^2=%.3f$' % (r2,),
+        r'MAE$=%.3f$%s' % (mae, unit_str),
+        r'RMSE$=%.3f$%s' % (rmse, unit_str)))
+    props = dict(boxstyle='round', facecolor='white', alpha=0.8, edgecolor='none')
+    ax.text(text_x, 0.05, textstr, transform=ax.transAxes, fontsize=14, verticalalignment='bottom', bbox=props)
+    ax.tick_params(axis='both', which='major', labelsize=12)
+    
+    fig.tight_layout()
+    return fig
 
 # 预加载
 db_df = load_database()
@@ -276,7 +353,7 @@ elif app_mode == "⚙️ 模型训练模式":
                 with open(MODEL_FILES[train_target]['param_path'], 'r', encoding='utf-8') as f:
                     params = json.load(f)
                 
-# 5. 调用子进程
+                # 5. 调用子进程
                 # 使用 or 操作符防止 JSON 中出现 null 导致 params.get 返回 None
                 cmd = [
                     sys.executable, "main.py", data_dir,
@@ -327,15 +404,22 @@ elif app_mode == "⚙️ 模型训练模式":
                     status.code(f"实时日志: {line.strip()}")
                 
                 process.wait()
+
+                # === 新增：自动画图并提供精准下载 ===
                 if process.returncode == 0:
                     st.success("🎉 训练圆满完成！新模型已就绪。")
+                    
+                    st.markdown("### 📈 模型测试集表现")
+                    result_csv = None 
                     
                     st.markdown("### 📥 下载训练成果")
                     st.info("⚠️ 请及时下载！如果网页休眠或刷新，这些文件可能会被系统重置清除。")
                     
-                    # 【核心修复】：加上 `and run_id in file_name`，只展示本次训练生成的文件
                     for file_name in os.listdir("."):
                         if ("model_best" in file_name or "test_results" in file_name) and run_id in file_name:
+                            if "test_results" in file_name:
+                                result_csv = file_name
+                                
                             with open(file_name, "rb") as f:
                                 file_bytes = f.read()
                                 st.download_button(
@@ -344,6 +428,15 @@ elif app_mode == "⚙️ 模型训练模式":
                                     file_name=file_name,
                                     mime="application/octet-stream"
                                 )
+                    
+                    if result_csv:
+                        with st.spinner("正在绘制线性拟合图..."):
+                            try:
+                                fig = draw_scatter_plot(result_csv, train_target)
+                                st.pyplot(fig)
+                                plt.close(fig) # 释放内存
+                            except Exception as e:
+                                st.warning(f"绘图失败: {e}")
                 else:
                     st.error("❌ 训练异常终止，请检查日志。")
                     
