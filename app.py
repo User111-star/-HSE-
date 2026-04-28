@@ -9,11 +9,12 @@ import sys
 import time
 import zipfile
 import shutil
+import random    # <--- 新增：用于随机抽样
 from stmol import showmol
 from pymatgen.core.structure import Structure
 from predict_api import SinglePredictor
 
-# === 画图与数学计算所需的依赖包 ===
+# === 画图所需的依赖包 ===
 import numpy as np   
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -73,11 +74,12 @@ MODEL_FILES = {
 }
 ATOM_INIT_PATH = "atom_init.json"
 
-# --- 4. 核心加载与画图函数 ---
+# --- 4. 核心加载函数 ---
 @st.cache_data
 def load_database():
     try:
         df = pd.read_csv("predict.csv")
+        # 暴力清洗列名空格，防止 KeyError
         df.columns = df.columns.str.strip()
         if 'index_label' in df.columns:
             df['index_label'] = df['index_label'].astype(str).str.strip()
@@ -105,55 +107,77 @@ def render_crystal(poscar_path):
     view.zoomTo()
     return view
 
+# === 新增：二合一的散点图绘制函数 ===
 @st.cache_data
 def draw_scatter_plot(csv_path, target_type):
-    """二合一画图逻辑：严格根据带隙或晶格调整坐标范围和单位"""
+    """根据测试结果 CSV 绘制散点图并返回 fig 对象"""
+    # 1. 读取数据
     df_test = pd.read_csv(csv_path, header=None, names=['Index', 'Calculated', 'Predicted'])
     
-    # 清洗非数字行
     df_test['Calculated'] = pd.to_numeric(df_test['Calculated'], errors='coerce')
     df_test['Predicted'] = pd.to_numeric(df_test['Predicted'], errors='coerce')
     df_test = df_test.dropna()
-
+    
     y_true = df_test['Calculated'].values
     y_pred = df_test['Predicted'].values
 
+    # 2. 计算误差
     r2 = r2_score(y_true, y_pred)
     mae = mean_absolute_error(y_true, y_pred)
     rmse = np.sqrt(mean_squared_error(y_true, y_pred))
     z = np.abs(y_true - y_pred) / np.sqrt(2)
 
+    # 3. 初始化画布
     fig, ax = plt.subplots(figsize=(6, 5))
     ax.set_aspect('equal', adjustable='box')
     scatter = ax.scatter(y_true, y_pred, c=z, cmap='viridis', s=30, alpha=0.8, edgecolor='none')
 
-    min_val, max_val = np.min(y_true), np.max(y_true)
+    min_val = min(np.min(y_true), np.min(y_pred))
+    max_val = max(np.max(y_true), np.max(y_pred))
 
+    # 4. 根据目标类型动态切换 UI 设置
     if "带隙" in target_type:
-        x_y_min, x_y_max = -0.1, max_val + 0.2
+        x_y_min = -0.1
+        x_y_max = max_val + 0.2
         unit_str = " eV"
         ax.set_xlabel(r'Calculated $E_{g\_HSE}$ (eV)', fontsize=16)
         ax.set_ylabel(r'Predicted $E_{g\_HSE}$ (eV)', fontsize=16)
         text_x = 0.40
     else:  # 晶格常数
-        x_y_min, x_y_max = min_val - 0.1, max_val + 0.2
+        x_y_min = min_val - 0.1
+        x_y_max = max_val + 0.2
         unit_str = ""
         ax.set_xlabel(r'Calculated a_HSE (Å)', fontsize=16)
         ax.set_ylabel(r'Predicted a_HSE (Å)', fontsize=16)
         text_x = 0.50
 
+    # 5. 画对角线和设置刻度
     ax.plot([x_y_min, x_y_max], [x_y_min, x_y_max], 'k--', lw=1, alpha=0.5)
+    ax.xaxis.set_major_formatter(FormatStrFormatter('%.1f'))
+    ax.yaxis.set_major_formatter(FormatStrFormatter('%.1f'))
+    ax.xaxis.set_major_locator(MaxNLocator(integer=False, nbins=6))
+    ax.yaxis.set_major_locator(MaxNLocator(integer=False, nbins=6))
     ax.set_xlim([x_y_min, x_y_max])
     ax.set_ylim([x_y_min, x_y_max])
-    
+
+    # 6. 颜色条设置
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="5%", pad=0.1)
     cbar = plt.colorbar(scatter, cax=cax)
+    cbar.ax.tick_params(labelsize=12)
+    cbar.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
     scatter.set_clim(vmin=0, vmax=np.max(z))
+    cbar.locator = MaxNLocator(nbins=6)
+    cbar.update_ticks()
 
-    textstr = '\n'.join((r'$R^2=%.3f$' % r2, r'MAE$=%.3f$%s' % (mae, unit_str), r'RMSE$=%.3f$%s' % (rmse, unit_str)))
+    # 7. 文本框
+    textstr = '\n'.join((
+        r'$R^2=%.3f$' % (r2,),
+        r'MAE$=%.3f$%s' % (mae, unit_str),
+        r'RMSE$=%.3f$%s' % (rmse, unit_str)))
     props = dict(boxstyle='round', facecolor='white', alpha=0.8, edgecolor='none')
     ax.text(text_x, 0.05, textstr, transform=ax.transAxes, fontsize=14, verticalalignment='bottom', bbox=props)
+    ax.tick_params(axis='both', which='major', labelsize=12)
     
     fig.tight_layout()
     return fig
@@ -166,21 +190,30 @@ models = load_all_models()
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2000/2000885.png", width=80)
     st.markdown("## 🧭 系统导航")
+    
     app_mode = st.radio("选择运行模式：", ["🔮 模型预测模式", "⚙️ 模型训练模式"], index=0)
     st.markdown("---")
     
     if app_mode == "🔮 模型预测模式":
-        target_prop = st.radio("🎯 选择预测目标：", list(MODEL_FILES.keys()), index=0)
+        st.markdown("### 🎯 预测配置")
+        target_prop = st.radio("选择预测目标：", list(MODEL_FILES.keys()), index=0)
+        
         st.markdown("### 🧬 当前模型超参数")
         try:
             with open(MODEL_FILES[target_prop]['param_path'], 'r', encoding='utf-8') as f:
                 params = json.load(f)
-            p_html = "".join([f"<div style='display:flex; justify-content:space-between; margin-bottom:8px;'><span>{k}</span><strong>{v:.4g if isinstance(v, float) else v}</strong></div>" for k,v in params.items()])
+            p_html = ""
+            for k, v in params.items():
+                display_v = f"{v:.4g}" if isinstance(v, float) else v
+                p_html += f"<div style='display:flex; justify-content:space-between; margin-bottom:8px;'><span>{k}</span><strong>{display_v}</strong></div>"
             st.markdown(f"<div class='param-box'>{p_html}</div>", unsafe_allow_html=True)
-        except Exception: st.warning("未找到参数文件")
+        except Exception: 
+            st.warning("未找到参数文件")
+            
     else:
-        train_target = st.radio("🎯 选择训练任务：", list(MODEL_FILES.keys()), index=0)
-        st.success(f"已加载【{train_target}】的超参数")
+        st.markdown("### 🎯 训练任务选择")
+        train_target = st.radio("选择训练任务：", list(MODEL_FILES.keys()), index=0)
+        st.success(f"已挂载【{train_target}】的预设超参数")
 
 st.markdown("<div class='main-title'>CGCNN 晶体性质智能平台</div>", unsafe_allow_html=True)
 st.markdown("<div class='sub-title'>基于图神经网络与贝叶斯优化的第一性原理精度替代模型</div>", unsafe_allow_html=True)
@@ -262,6 +295,9 @@ if app_mode == "🔮 模型预测模式":
         st.markdown("### 📥 批量数据输入区")
         uploaded_zip = st.file_uploader("上传包含多个 POSCAR 和 (可选) 真值表 CSV 的 ZIP 压缩包", type="zip")
         
+        # === 核心进阶：新增抽样控制器 ===
+        max_predict_num = st.number_input("期望预测的样本数量 (将在剔除真值 <0 后随机抽取)", min_value=1, value=50, step=1)
+        
         if uploaded_zip and models[target_prop]:
             if st.button("🚀 启动批量预测", use_container_width=True):
                 run_id = str(int(time.time()))
@@ -269,7 +305,7 @@ if app_mode == "🔮 模型预测模式":
                 os.makedirs(batch_temp, exist_ok=True)
                 
                 try:
-                    with st.spinner("正在解压并智能寻路数据..."):
+                    with st.spinner("正在解压并智能比对数据..."):
                         zip_path = os.path.join(batch_temp, "upload.zip")
                         with open(zip_path, "wb") as f:
                             f.write(uploaded_zip.getbuffer())
@@ -296,85 +332,99 @@ if app_mode == "🔮 模型预测模式":
                     if not poscar_files:
                         st.error("❌ ZIP 包内未找到任何 POSCAR 文件！")
                     else:
-                        st.success(f"✅ 成功找到 {len(poscar_files)} 个 POSCAR 结构，即将开启预测通道...")
-                        
-                        # 定位真实值列索引
                         target_idx = 2 if "Bandgap" in target_prop else 4
                         
-                        prog_bar = st.progress(0)
-                        status_text = st.empty()
-                        results = []
-                        
-                        # 3. 循环批量预测
-                        for i, p_path in enumerate(poscar_files):
-                            status_text.code(f"正在预测 ({i+1}/{len(poscar_files)}): {os.path.basename(p_path)}")
-                            try:
-                                # 核心：调用侧边栏选定的模型
-                                pred_val = models[target_prop].predict(p_path)
-                                
-                                # 智能提取 ID (匹配文件名或者父文件夹名的数字)
-                                filename = os.path.basename(p_path)
-                                nums = re.findall(r'\d+', filename)
-                                if not nums:
-                                    parent_dir = os.path.basename(os.path.dirname(p_path))
-                                    nums = re.findall(r'\d+', parent_dir)
-                                file_id = nums[0] if nums else "UNKNOWN"
-                                
-                                # 匹配真实值
-                                true_val = np.nan
-                                if df_batch is not None and file_id != "UNKNOWN":
-                                    # 提取真值表第一列进行字符匹配
-                                    match = df_batch[df_batch.iloc[:, 0].astype(str).str.strip() == str(file_id)]
-                                    if not match.empty:
-                                        try:
-                                            true_val = float(match.iloc[0, target_idx])
-                                        except: pass
-                                        
-                                results.append([file_id, true_val, pred_val])
-                            except Exception as e:
-                                pass # 忽略单个晶体可能引起的崩溃
+                        # === 核心进阶：数据预演与真值过滤 ===
+                        valid_data_info = []
+                        for p_path in poscar_files:
+                            # 智能提取 ID (匹配文件名或者父文件夹名的数字)
+                            filename = os.path.basename(p_path)
+                            nums = re.findall(r'\d+', filename)
+                            if not nums:
+                                parent_dir = os.path.basename(os.path.dirname(p_path))
+                                nums = re.findall(r'\d+', parent_dir)
+                            file_id = nums[0] if nums else "UNKNOWN"
                             
-                            # 细粒度更新进度条
-                            prog_bar.progress((i + 1) / len(poscar_files))
+                            # 匹配真实值
+                            true_val = np.nan
+                            if df_batch is not None and file_id != "UNKNOWN":
+                                match = df_batch[df_batch.iloc[:, 0].astype(str).str.strip() == str(file_id)]
+                                if not match.empty:
+                                    try:
+                                        true_val = float(match.iloc[0, target_idx])
+                                    except: pass
+                            
+                            # 【过滤逻辑】：如果真值存在且小于0，直接扔掉不要！
+                            if pd.notna(true_val) and true_val < 0:
+                                continue
+                                
+                            valid_data_info.append((p_path, file_id, true_val))
                         
-                        status_text.success(f"🎉 批量预测完成！共成功处理 {len(results)} 个文件。")
-                        
-                        # 4. 保存为 CSV
-                        res_df = pd.DataFrame(results, columns=["Index", "Calculated", "Predicted"])
-                        out_csv_name = f"batch_predict_results_{run_id}.csv"
-                        res_df.to_csv(out_csv_name, index=False, header=False)
-                        
-                        st.markdown("---")
-                        
-                        # 5. 自动画图与下载
-                        col_a, col_b = st.columns([1, 1.5])
-                        with col_a:
-                            st.markdown("### 📥 获取预测报告")
-                            st.info("完整的编号及预测对照表已生成，请点击下方按钮下载保存。")
-                            with open(out_csv_name, "rb") as f:
-                                st.download_button(
-                                    label=f"💾 下载 {out_csv_name}",
-                                    data=f.read(),
-                                    file_name=out_csv_name,
-                                    mime="text/csv"
-                                )
-                        
-                        with col_b:
-                            # 过滤无效真实值以防画图崩溃
-                            valid_rows = res_df.dropna()
-                            if len(valid_rows) >= 2:
-                                st.markdown("### 📈 批量预测散点拟合")
-                                with st.spinner("正在绘制可视化图表..."):
-                                    fig = draw_scatter_plot(out_csv_name, target_prop)
-                                    st.pyplot(fig)
-                                    plt.close(fig)
+                        # 检查过滤后是否还有存活的数据
+                        if len(valid_data_info) == 0:
+                            st.error("⚠️ 数据过滤完毕后，未能找到任何有效的预测样本（可能所有数值均 < 0），预测已终止。")
+                        else:
+                            # === 核心进阶：依据输入值进行智能抽样 ===
+                            if len(valid_data_info) > max_predict_num:
+                                valid_data_info = random.sample(valid_data_info, max_predict_num)
+                                st.success(f"✅ 剔除异常数据后，共从 {len(poscar_files)} 个文件中随机抽取了 {max_predict_num} 个有效样本进行预测。")
                             else:
-                                st.warning("⚠️ CSV 内匹配到的有效真实值不足（或未提供 CSV），无法绘制真实/预测对比散点图。")
+                                st.success(f"✅ 剔除异常数据后剩余 {len(valid_data_info)} 个有效样本 (未超过您设定的阈值)，即将全量预测。")
+                                
+                            prog_bar = st.progress(0)
+                            status_text = st.empty()
+                            results = []
+                            
+                            # 3. 循环批量预测 (仅对过滤+抽样后的最终有效数组执行)
+                            for i, (p_path, file_id, true_val) in enumerate(valid_data_info):
+                                status_text.code(f"正在预测 ({i+1}/{len(valid_data_info)}): 晶体ID {file_id}")
+                                try:
+                                    # 调用侧边栏选定的模型
+                                    pred_val = models[target_prop].predict(p_path)
+                                    results.append([file_id, true_val, pred_val])
+                                except Exception as e:
+                                    pass # 忽略单个可能引起的崩溃
+                                
+                                # 更新进度条
+                                prog_bar.progress((i + 1) / len(valid_data_info))
+                            
+                            status_text.success(f"🎉 批量预测完成！共生成 {len(results)} 条数据结果。")
+                            
+                            # 4. 保存为 CSV
+                            res_df = pd.DataFrame(results, columns=["Index", "Calculated", "Predicted"])
+                            out_csv_name = f"batch_predict_results_{run_id}.csv"
+                            res_df.to_csv(out_csv_name, index=False, header=False)
+                            
+                            st.markdown("---")
+                            
+                            # 5. 自动画图与提供下载
+                            col_a, col_b = st.columns([1, 1.5])
+                            with col_a:
+                                st.markdown("### 📥 获取预测报告")
+                                st.info("完整的编号、真实值及预测值对照表已生成，请点击下载保存。")
+                                with open(out_csv_name, "rb") as f:
+                                    st.download_button(
+                                        label=f"💾 下载 {out_csv_name}",
+                                        data=f.read(),
+                                        file_name=out_csv_name,
+                                        mime="text/csv"
+                                    )
+                            
+                            with col_b:
+                                # 确保真值存在，防止画图崩溃
+                                valid_rows = res_df.dropna()
+                                if len(valid_rows) >= 2:
+                                    st.markdown("### 📈 批量预测散点拟合")
+                                    with st.spinner("正在绘制可视化图表..."):
+                                        fig = draw_scatter_plot(out_csv_name, target_prop)
+                                        st.pyplot(fig)
+                                        plt.close(fig)
+                                else:
+                                    st.warning("⚠️ CSV 内匹配到的有效真实值不足（或未提供参考表），无法绘制真实/预测对比散点图。")
                 
                 finally:
-                    # 用完即焚，不占用云端空间
+                    # 销毁无用的数据，防止炸硬盘
                     shutil.rmtree(batch_temp, ignore_errors=True)
-
 
 # --- 7. 训练模式界面 ---
 elif app_mode == "⚙️ 模型训练模式":
@@ -396,7 +446,6 @@ elif app_mode == "⚙️ 模型训练模式":
         st.markdown("</div>", unsafe_allow_html=True)
 
         if st.button("🚀 启动模型训练", use_container_width=True, disabled=not (valid and uploaded_dataset)):
-            # 引入时间戳，每次生成独一无二的文件夹名称
             run_id = str(int(time.time()))
             temp_root = f"temp_run_{run_id}"
             data_dir = f"temp_dataset_{run_id}"
@@ -405,20 +454,17 @@ elif app_mode == "⚙️ 模型训练模式":
             os.makedirs(data_dir, exist_ok=True)
             
             try:
-                # 1. 解压
                 zip_path = os.path.join(temp_root, "data.zip")
                 with open(zip_path, "wb") as f: 
                     f.write(uploaded_dataset.getbuffer())
                 with zipfile.ZipFile(zip_path, 'r') as z: 
                     z.extractall(temp_root)
                 
-                # 2. 智能寻路：查找包含 POSCAR 和 CSV 的目录
                 real_folder = None
                 target_csv = None
                 for r, d, files in os.walk(temp_root):
                     csv_files = [f for f in files if f.endswith('.csv')]
                     has_poscar = any("POSCAR" in f for f in files)
-                    
                     if csv_files and has_poscar:
                         real_folder = r
                         target_csv = csv_files[0]  
@@ -428,15 +474,12 @@ elif app_mode == "⚙️ 模型训练模式":
                     st.error("❌ ZIP 包内未同时找到 `CSV表格` 和 `POSCAR` 文件，请确保它们放在同一个文件夹内！")
                     st.stop()
                 
-                # 3. 挂载数据到干净目录，并【强制重命名】CSV 喂给 main.py
                 for item in os.listdir(real_folder):
                     src_path = os.path.join(real_folder, item)
-                    
                     if item == target_csv:
                         dst_path = os.path.join(data_dir, "id_prop.csv")
                     else:
                         dst_path = os.path.join(data_dir, item)
-                        
                     if os.path.isdir(src_path):
                         shutil.copytree(src_path, dst_path)
                     else:
@@ -447,10 +490,8 @@ elif app_mode == "⚙️ 模型训练模式":
                 with open(MODEL_FILES[train_target]['param_path'], 'r', encoding='utf-8') as f:
                     params = json.load(f)
                 
-                # 依据 Excel 截图精准传参
                 target_idx = 2 if "Bandgap" in train_target else 4
                 
-                # 5. 调用子进程
                 cmd = [
                     sys.executable, "main.py", data_dir,
                     "--epochs", str(params.get("epochs", 50) or 50),
@@ -479,7 +520,6 @@ elif app_mode == "⚙️ 模型训练模式":
                         curr_epoch = int(full_match.group(1))
                         curr_batch = int(full_match.group(2))
                         total_batch = int(full_match.group(3))
-                        
                         fractional_epoch = curr_epoch + (curr_batch / total_batch)
                         prog = min(fractional_epoch / total_epochs, 1.0)
                         progress_bar.progress(prog)
@@ -488,12 +528,9 @@ elif app_mode == "⚙️ 模型训练模式":
                         if epoch_match:
                             curr = int(epoch_match.group(1))
                             progress_bar.progress(min(curr / total_epochs, 1.0))
-                            
                     status.code(f"实时日志: {line.strip()}")
                 
                 process.wait()
-                
-                # === 自动画图并提供精准下载 ===
                 if process.returncode == 0:
                     st.success("🎉 训练圆满完成！新模型已就绪。")
                     
