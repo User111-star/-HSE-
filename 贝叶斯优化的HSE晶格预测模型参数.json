@@ -1,0 +1,8 @@
+{
+    "lr": 0.0007264864950893672,
+    "batch_size": 64,
+    "atom_fea_len": 64,
+    "n_conv": 2,
+    "optim": "Adam",
+    "weight_decay": 9.351080602277256e-06
+}

@@ -1,0 +1,6 @@
+streamlit
+torch
+numpy
+pymatgen
+py3Dmol
+stmol
