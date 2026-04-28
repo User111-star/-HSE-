@@ -276,7 +276,7 @@ elif app_mode == "⚙️ 模型训练模式":
                 with open(MODEL_FILES[train_target]['param_path'], 'r', encoding='utf-8') as f:
                     params = json.load(f)
                 
-                # 5. 调用子进程
+# 5. 调用子进程
                 # 使用 or 操作符防止 JSON 中出现 null 导致 params.get 返回 None
                 cmd = [
                     sys.executable, "main.py", data_dir,
@@ -294,7 +294,8 @@ elif app_mode == "⚙️ 模型训练模式":
                     "--optim", str(params.get("optim", "SGD") or "SGD"),
                     "--weight-decay", str(params.get("weight_decay", 0) or 0),
                     
-                    # 强行给 target 传一个默认值 (0)
+                    # 【核心修复】：强行设置打印频率为 1，让它每个 batch 都输出日志，保证进度条平滑
+                    "--print-freq", "1",
                     "--target", "0" 
                 ]
                 
@@ -302,23 +303,39 @@ elif app_mode == "⚙️ 模型训练模式":
                 status = st.empty()
                 process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
                 
+                total_epochs = int(params.get("epochs", 50) or 50)
+                
                 for line in process.stdout:
-                    epoch_match = re.search(r"Epoch: \[(\d+)\]", line)
-                    if epoch_match:
-                        curr = int(epoch_match.group(1))
-                        progress_bar.progress(min(curr / int(params.get("epochs", 50) or 50), 1.0))
+                    # 【核心修复】：解析更细腻的进度 (轮数 + 当前批次/总批次)
+                    full_match = re.search(r"Epoch:\s*\[(\d+)\]\[(\d+)/(\d+)\]", line)
+                    if full_match:
+                        curr_epoch = int(full_match.group(1))
+                        curr_batch = int(full_match.group(2))
+                        total_batch = int(full_match.group(3))
+                        
+                        # 计算包含小数的细致进度比例
+                        fractional_epoch = curr_epoch + (curr_batch / total_batch)
+                        prog = min(fractional_epoch / total_epochs, 1.0)
+                        progress_bar.progress(prog)
+                    else:
+                        # 兼容处理测试阶段等只有整数 Epoch 的情况
+                        epoch_match = re.search(r"Epoch: \[(\d+)\]", line)
+                        if epoch_match:
+                            curr = int(epoch_match.group(1))
+                            progress_bar.progress(min(curr / total_epochs, 1.0))
+                            
                     status.code(f"实时日志: {line.strip()}")
                 
                 process.wait()
                 if process.returncode == 0:
                     st.success("🎉 训练圆满完成！新模型已就绪。")
                     
-                    # === 新增：自动寻找生成的文件并提供下载按钮 ===
                     st.markdown("### 📥 下载训练成果")
                     st.info("⚠️ 请及时下载！如果网页休眠或刷新，这些文件可能会被系统重置清除。")
                     
+                    # 【核心修复】：加上 `and run_id in file_name`，只展示本次训练生成的文件
                     for file_name in os.listdir("."):
-                        if "model_best" in file_name or "test_results" in file_name:
+                        if ("model_best" in file_name or "test_results" in file_name) and run_id in file_name:
                             with open(file_name, "rb") as f:
                                 file_bytes = f.read()
                                 st.download_button(
