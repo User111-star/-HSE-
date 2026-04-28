@@ -206,12 +206,15 @@ elif app_mode == "⚙️ 模型训练模式":
 
         if st.button("🚀 启动模型训练", use_container_width=True, disabled=not (valid and uploaded_dataset)):
             # --- 自动解压与过渡文件夹构建机制 ---
-            temp_root = "temp_run"
-            data_dir = "temp_dataset"
-            for d in [temp_root, data_dir]:
-                if os.path.exists(d): shutil.rmtree(d, ignore_errors=True)
-            os.makedirs(temp_root)
-            os.makedirs(data_dir)
+            # 【修改这里】：引入时间戳，每次生成独一无二的文件夹名称
+            import time
+            run_id = str(int(time.time()))
+            temp_root = f"temp_run_{run_id}"
+            data_dir = f"temp_dataset_{run_id}"
+            
+            # 因为是全新名字，大概率不存在，但加上 exist_ok 更保险
+            os.makedirs(temp_root, exist_ok=True)
+            os.makedirs(data_dir, exist_ok=True)
             
             try:
                 # 1. 解压
