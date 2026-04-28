@@ -1,3 +1,4 @@
+import re
 import streamlit as st
 import os
 import json
@@ -241,45 +242,51 @@ with col_right:
                     icon = MODEL_FILES[target_property]["icon"]
                     prop_name = target_property.split(" ")[0]
 
-                    # 2. 纯后台全自动提取数据库真实值并计算误差
+# 2. 纯后台全自动提取数据库真实值并计算误差 (终极防错版)
                     error_html = ""
                     if not db_df.empty:
-                        # 从文件名提取 ID，例如 "1.POSCAR" -> "1"
-                        file_base_name = str(os.path.splitext(uploaded_file.name)[0])
+                        # 【核心修复】：使用正则暴力提取文件名中的纯数字！
+                        # 无论文件名是 "6.POSCAR", "6.txt" 还是 " 6 ", 都会精准提取出数字 6
+                        id_match = re.search(r'\d+', uploaded_file.name)
                         
-                        # 直接在数据库查找这个 ID
-                        match_row = db_df[db_df['index_label'] == file_base_name]
-                        
-                        if not match_row.empty:
-                            # 判断目标属性获取对应列名
-                            target_col = 'Gap' if "Bandgap" in target_property else 'lattice'
+                        if id_match:
+                            # 转换成真正的整数
+                            file_id = int(id_match.group())
                             
-                            try:
-                                # 强制转换为浮点数，防止计算错误
-                                true_val = float(match_row.iloc[0][target_col])
+                            # 将数据库的 index_label 列也强制转为数字列（如果原本有文本或不可见字符，自动清洗）
+                            db_df['index_label_num'] = pd.to_numeric(db_df['index_label'], errors='coerce')
+                            
+                            # 纯数字间的绝对比对
+                            match_row = db_df[db_df['index_label_num'] == file_id]
+                            
+                            if not match_row.empty:
+                                # 判断目标属性获取对应列名
+                                target_col = 'Gap' if "Bandgap" in target_property else 'lattice'
                                 
-                                # 计算误差
-                                abs_error = abs(result_val - true_val)
-                                rel_error = (abs_error / true_val) * 100 if true_val != 0 else 0
-                                
-                                # 构建比对 HTML 卡片
-                                error_html = f"""
-                                <div style="display: flex; justify-content: space-around; margin-top: 20px; border-top: 2px solid #ecf0f1; padding-top: 20px;">
-                                    <div>
-                                        <div style="font-size: 1rem; color: #7f8c8d; text-transform: uppercase;">📊 数据库真实值</div>
-                                        <div style="font-size: 1.8rem; font-weight: 700; color: #2980b9;">{true_val:.4f} <span style="font-size: 1.2rem;">{unit}</span></div>
+                                try:
+                                    true_val = float(match_row.iloc[0][target_col])
+                                    abs_error = abs(result_val - true_val)
+                                    rel_error = (abs_error / true_val) * 100 if true_val != 0 else 0
+                                    
+                                    error_html = f"""
+                                    <div style="display: flex; justify-content: space-around; margin-top: 20px; border-top: 2px solid #ecf0f1; padding-top: 20px;">
+                                        <div>
+                                            <div style="font-size: 1rem; color: #7f8c8d; text-transform: uppercase;">📊 数据库真实值</div>
+                                            <div style="font-size: 1.8rem; font-weight: 700; color: #2980b9;">{true_val:.4f} <span style="font-size: 1.2rem;">{unit}</span></div>
+                                        </div>
+                                        <div>
+                                            <div style="font-size: 1rem; color: #7f8c8d; text-transform: uppercase;">📉 预测误差</div>
+                                            <div style="font-size: 1.8rem; font-weight: 700; color: #e74c3c;">{abs_error:.4f} <span style="font-size: 1.2rem;">{unit}</span></div>
+                                            <div style="font-size: 0.9rem; color: #e74c3c; font-weight:bold;">(相对误差: {rel_error:.2f}%)</div>
+                                        </div>
                                     </div>
-                                    <div>
-                                        <div style="font-size: 1rem; color: #7f8c8d; text-transform: uppercase;">📉 预测误差</div>
-                                        <div style="font-size: 1.8rem; font-weight: 700; color: #e74c3c;">{abs_error:.4f} <span style="font-size: 1.2rem;">{unit}</span></div>
-                                        <div style="font-size: 0.9rem; color: #e74c3c; font-weight:bold;">(相对误差: {rel_error:.2f}%)</div>
-                                    </div>
-                                </div>
-                                """
-                            except Exception as e:
-                                error_html = f"<div style='margin-top: 15px; color: #e74c3c;'>❌ 计算对比时出错，检查数据库内数据是否包含字母。</div>"
+                                    """
+                                except Exception as e:
+                                    error_html = f"<div style='margin-top: 15px; color: #e74c3c;'>❌ 计算对比时出错，请检查数据库 <b>{target_col}</b> 列是否全为数字。</div>"
+                            else:
+                                error_html = f"<div style='margin-top: 15px; color: #f39c12;'>⚠️ 未在数据库找到 ID 为 <b>{file_id}</b> 的记录。</div>"
                         else:
-                            error_html = f"<div style='margin-top: 15px; color: #f39c12;'>⚠️ 未在数据库找到 ID 为 <b>{file_base_name}</b> 的真实值记录，无法比对。</div>"
+                            error_html = f"<div style='margin-top: 15px; color: #f39c12;'>⚠️ 无法从文件名 <b>{uploaded_file.name}</b> 中提取到纯数字ID，无法去数据库比对。</div>"
 
                     # 3. 最终 UI 渲染 (一定要带 unsafe_allow_html=True)
                     st.markdown(
