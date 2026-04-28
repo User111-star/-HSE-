@@ -3,6 +3,7 @@ import os
 import json
 import pandas as pd
 import py3Dmol
+import re  # 新增：用于正则提取数字ID
 from stmol import showmol
 from pymatgen.core.structure import Structure
 from predict_api import SinglePredictor
@@ -125,9 +126,9 @@ def load_database():
     """加载预测数据库并修正数据类型"""
     try:
         df = pd.read_csv("predict.csv")
-        # 强制将 index_label 转为字符串，方便无缝匹配文件名
+        # 强制将 index_label 转为字符串并去空格，防止匹配不到
         if 'index_label' in df.columns:
-            df['index_label'] = df['index_label'].astype(str)
+            df['index_label'] = df['index_label'].astype(str).str.strip()
         return df
     except Exception as e:
         return pd.DataFrame()
@@ -197,7 +198,7 @@ col_left, col_space, col_right = st.columns([1.2, 0.1, 1])
 
 with col_left:
     st.markdown("### 📥 数据输入区")
-    st.info("请上传标准格式的 `POSCAR` 文件 (文件名需包含对应的数字ID，如 '1.POSCAR')。")
+    st.info("请上传标准格式的 `POSCAR` 文件 (系统会自动提取文件名中的数字与数据库比对)。")
     uploaded_file = st.file_uploader("", help="支持 VASP POSCAR 格式文件")
 
     if uploaded_file:
@@ -222,10 +223,10 @@ with col_right:
     if not uploaded_file:
         st.markdown(
             """
-            <div style='text-align:center; padding: 50px; background-color:#f1f3f4; border-radius: 10px; color:#9aa0a6; border: 2px dashed #dadce0;'>
-                <h4>等待上传 POSCAR 数据...</h4>
-                <p>上传文件后，点击下方预测按钮即可获取高精度预测结果。</p>
-            </div>
+<div style='text-align:center; padding: 50px; background-color:#f1f3f4; border-radius: 10px; color:#9aa0a6; border: 2px dashed #dadce0;'>
+    <h4>等待上传 POSCAR 数据...</h4>
+    <p>上传文件后，点击下方预测按钮即可获取高精度预测结果。</p>
+</div>
             """, unsafe_allow_html=True
         )
 
@@ -244,14 +245,14 @@ with col_right:
                     # 2. 纯后台全自动提取数据库真实值并计算误差
                     error_html = ""
                     if not db_df.empty:
-                        # 从文件名提取 ID，例如 "1.POSCAR" -> "1"
-                        file_base_name = str(os.path.splitext(uploaded_file.name)[0])
+                        # 智能正则提取纯数字，例如 "POSCAR6312" -> "6312", "7.POSCAR" -> "7"
+                        nums = re.findall(r'\d+', uploaded_file.name)
+                        file_id = nums[0] if nums else "UNKNOWN"
                         
                         # 直接在数据库查找这个 ID
-                        match_row = db_df[db_df['index_label'] == file_base_name]
+                        match_row = db_df[db_df['index_label'] == file_id]
                         
                         if not match_row.empty:
-                            # 判断目标属性获取对应列名
                             target_col = 'Gap' if "Bandgap" in target_property else 'lattice'
                             
                             try:
@@ -262,37 +263,34 @@ with col_right:
                                 abs_error = abs(result_val - true_val)
                                 rel_error = (abs_error / true_val) * 100 if true_val != 0 else 0
                                 
-                                # 构建比对 HTML 卡片
+                                # 构建比对 HTML 卡片 (注意：此处字符串必须顶格写，防止被解析成代码块)
                                 error_html = f"""
-                                <div style="display: flex; justify-content: space-around; margin-top: 20px; border-top: 2px solid #ecf0f1; padding-top: 20px;">
-                                    <div>
-                                        <div style="font-size: 1rem; color: #7f8c8d; text-transform: uppercase;">📊 数据库真实值</div>
-                                        <div style="font-size: 1.8rem; font-weight: 700; color: #2980b9;">{true_val:.4f} <span style="font-size: 1.2rem;">{unit}</span></div>
-                                    </div>
-                                    <div>
-                                        <div style="font-size: 1rem; color: #7f8c8d; text-transform: uppercase;">📉 预测误差</div>
-                                        <div style="font-size: 1.8rem; font-weight: 700; color: #e74c3c;">{abs_error:.4f} <span style="font-size: 1.2rem;">{unit}</span></div>
-                                        <div style="font-size: 0.9rem; color: #e74c3c; font-weight:bold;">(相对误差: {rel_error:.2f}%)</div>
-                                    </div>
-                                </div>
-                                """
+<div style="display: flex; justify-content: space-around; margin-top: 20px; border-top: 2px solid #ecf0f1; padding-top: 20px;">
+    <div>
+        <div style="font-size: 1rem; color: #7f8c8d; text-transform: uppercase;">📊 数据库真实值 (ID:{file_id})</div>
+        <div style="font-size: 1.8rem; font-weight: 700; color: #2980b9;">{true_val:.4f} <span style="font-size: 1.2rem;">{unit}</span></div>
+    </div>
+    <div>
+        <div style="font-size: 1rem; color: #7f8c8d; text-transform: uppercase;">📉 预测误差</div>
+        <div style="font-size: 1.8rem; font-weight: 700; color: #e74c3c;">{abs_error:.4f} <span style="font-size: 1.2rem;">{unit}</span></div>
+        <div style="font-size: 0.9rem; color: #e74c3c; font-weight:bold;">(相对误差: {rel_error:.2f}%)</div>
+    </div>
+</div>
+"""
                             except Exception as e:
                                 error_html = f"<div style='margin-top: 15px; color: #e74c3c;'>❌ 计算对比时出错，检查数据库内数据是否包含字母。</div>"
                         else:
-                            error_html = f"<div style='margin-top: 15px; color: #f39c12;'>⚠️ 未在数据库找到 ID 为 <b>{file_base_name}</b> 的真实值记录，无法比对。</div>"
+                            error_html = f"<div style='margin-top: 15px; color: #f39c12;'>⚠️ 未在数据库找到 ID 为 <b>{file_id}</b> 的真实值记录，无法比对。</div>"
 
-                    # 3. 最终 UI 渲染 (一定要带 unsafe_allow_html=True)
-                    st.markdown(
-                        f"""
-                        <div class="result-card">
-                            <div class="result-label">{icon} 目标性质: {prop_name}</div>
-                            <div class="result-value">{result_val:.4f} <span style="font-size: 1.5rem; color:#7f8c8d;">{unit}</span></div>
-                            <div style="color: #27ae60; font-weight: 500; margin-bottom: 10px;">✓ 预测成功</div>
-                            {error_html}
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
+                    # 3. 最终 UI 渲染 (同样必须顶格写)
+                    st.markdown(f"""
+<div class="result-card">
+    <div class="result-label">{icon} 目标性质: {prop_name}</div>
+    <div class="result-value">{result_val:.4f} <span style="font-size: 1.5rem; color:#7f8c8d;">{unit}</span></div>
+    <div style="color: #27ae60; font-weight: 500; margin-bottom: 10px;">✓ 预测成功</div>
+    {error_html}
+</div>
+""", unsafe_allow_html=True)
 
                 except Exception as e:
                     st.error(f"❌ 运算网络出错: {e}")
