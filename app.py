@@ -262,14 +262,25 @@ elif app_mode == "⚙️ 模型训练模式":
                     params = json.load(f)
                 
                 # 5. 调用子进程
+                # 使用 or 操作符防止 JSON 中出现 null 导致 params.get 返回 None
                 cmd = [
                     sys.executable, "main.py", data_dir,
-                    "--epochs", str(params.get("epochs", 50)),
-                    "--batch-size", str(params.get("batch_size", 256)),
-                    "--lr", str(params.get("lr", 0.01)),
+                    # 基础参数
+                    "--epochs", str(params.get("epochs", 50) or 50),
+                    "--batch-size", str(params.get("batch_size", 256) or 256),
+                    "--lr", str(params.get("lr", 0.01) or 0.01),
                     "--train-ratio", str(train_r),
                     "--val-ratio", str(val_r),
-                    "--test-ratio", str(test_r)
+                    "--test-ratio", str(test_r),
+                    
+                    # 【修复 1】：补全遗漏的 JSON 核心超参数
+                    "--n-conv", str(params.get("n_conv", 3) or 3),
+                    "--atom-fea-len", str(params.get("atom_fea_len", 64) or 64),
+                    "--optim", str(params.get("optim", "SGD")),
+                    "--weight-decay", str(params.get("weight_decay", 0) or 0),
+                    
+                    # 【修复 2】：强行给 target 传一个默认值 (0)，防止 args.target 变 None 导致崩溃
+                    "--target", "0" 
                 ]
                 
                 progress_bar = st.progress(0)
@@ -280,7 +291,7 @@ elif app_mode == "⚙️ 模型训练模式":
                     epoch_match = re.search(r"Epoch: \[(\d+)\]", line)
                     if epoch_match:
                         curr = int(epoch_match.group(1))
-                        progress_bar.progress(min(curr / int(params.get("epochs", 50)), 1.0))
+                        progress_bar.progress(min(curr / int(params.get("epochs", 50) or 50), 1.0))
                     status.code(f"实时日志: {line.strip()}")
                 
                 process.wait()
