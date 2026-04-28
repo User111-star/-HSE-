@@ -101,21 +101,32 @@ def main():
     print(args)  
     print(args.data_options)
     print(args.target)
-    # load data
-    dataset = CIFData(*args.data_options,args.target) #*迭代
-    # ========== 新增：过滤目标值为负数的样本 ==========
-    # 遍历原始数据集，筛选出target≥0的样本
+# load data
+    dataset = CIFData(*args.data_options, args.target)
+
+    # ========== 🚀 数据集过滤与 Demo 极速截断模式 ==========
+    # 1. 过滤掉 target < 0 的异常数据
     filtered_dataset = []
     for idx in range(len(dataset)):
-        # 获取每个样本的target（目标值）
-        _, target, _ = dataset[idx]  # dataset[idx]返回 (structures, target, cif_id)
-        # 过滤条件：target非负（根据需求可调整为 >0 或 ≥0）
+        _, target, _ = dataset[idx]
         if target >= 0:
             filtered_dataset.append(dataset[idx])
-    # 打印过滤信息（可选，用于验证）
-    print(f"原始数据集样本数：{len(dataset)}，过滤后样本数：{len(filtered_dataset)}")
-    # 替换原始dataset为过滤后的dataset
-    dataset = filtered_dataset
+    
+    print(f"🧹 数据清洗：原始样本数 {len(dataset)}，过滤负数后剩 {len(filtered_dataset)}")
+
+    # 2. 截断数据以加速 Web UI 展示 (保证训练集刚好跑约 8 个 Batch)
+    # 反推计算：总数据量 = (8个批次 * 批次大小) / 训练集比例
+    train_r = args.train_ratio if args.train_ratio is not None else 0.8
+    demo_size = int((8 * args.b) / train_r)
+
+    # 如果清洗后的数据量大于我们需要展示的数据量，就进行随机抽样
+    if len(filtered_dataset) > demo_size:
+        from random import sample
+        dataset = sample(filtered_dataset, demo_size)
+        print(f"🔥 Demo 模式开启：为保证前端演示速度，总数据量已强制截断为 {len(dataset)} 条！")
+    else:
+        dataset = filtered_dataset
+        print(f"⚠️ 当前数据量 ({len(dataset)}) 不足 8 次迭代所需的数量，将使用全部合法数据。")
     # ===============================================
     collate_fn = collate_pool
     train_loader, val_loader, test_loader = get_train_val_test_loader(
