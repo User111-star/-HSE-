@@ -117,7 +117,7 @@ def main():
     # 2. 截断数据以加速 Web UI 展示 (保证训练集刚好跑约 8 个 Batch)
     # 反推计算：总数据量 = (8个批次 * 批次大小) / 训练集比例
     train_r = args.train_ratio if args.train_ratio is not None else 0.8
-    demo_size = int((8 * args.b) / train_r)
+    demo_size = int((4 * args.b) / train_r)
 
     # 如果清洗后的数据量大于我们需要展示的数据量，就进行随机抽样
     if len(filtered_dataset) > demo_size:
