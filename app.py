@@ -193,6 +193,11 @@ with st.sidebar:
                 display_name = "🧠 隐藏层维度"
             else:
                 display_name = f"🔹 {key}"
+            # 👇 新增这段逻辑：如果值是超长小数，就格式化为科学计数法
+            display_value = value
+            if isinstance(value, float):
+                # .4g 表示保留4位有效数字，非常长的小数会自动变成类似 7.265e-04 的格式
+                display_value = f"{value:.4g}"
 
             param_html += f"<div style='display:flex; justify-content:space-between; margin-bottom:8px;'><span>{display_name}</span><strong>{value}</strong></div>"
 
