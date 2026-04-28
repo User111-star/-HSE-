@@ -8,3 +8,4 @@ stmol
 ipython-genutils
 ipywidgets
 pandas
+scikit-learn
